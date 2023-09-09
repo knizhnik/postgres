@@ -21,6 +21,8 @@
 #include "storage/bufmgr.h"
 #include "storage/proc.h"
 
+#include <sys/mman.h>
+
 #define INT_ACCESS_ONCE(var)	((int)(*((volatile int *)&(var))))
 
 
@@ -46,6 +48,9 @@ typedef struct
 	 * NOTE: lastFreeBuffer is undefined when firstFreeBuffer is -1 (that is,
 	 * when the list is empty)
 	 */
+
+	int         firstPunchedBuffer;
+	int         nPunchedBuffers;
 
 	/*
 	 * Statistics.  These counters should be wide enough that they can't
@@ -91,6 +96,8 @@ typedef struct BufferAccessStrategyData
 	Buffer		buffers[FLEXIBLE_ARRAY_MEMBER];
 }			BufferAccessStrategyData;
 
+/* GUC */
+int AvailableBuffers;
 
 /* Prototypes for internal functions */
 static BufferDesc *GetBufferFromRing(BufferAccessStrategy strategy,
@@ -108,15 +115,16 @@ static inline uint32
 ClockSweepTick(void)
 {
 	uint32		victim;
+	uint32		skip_count;
 
 	/*
 	 * Atomically move hand ahead one buffer - if there's several processes
 	 * doing this, this can lead to buffers being returned slightly out of
 	 * apparent order.
 	 */
+  Retry:
 	victim =
 		pg_atomic_fetch_add_u32(&StrategyControl->nextVictimBuffer, 1);
-
 	if (victim >= NBuffers)
 	{
 		uint32		originalVictim = victim;
@@ -159,6 +167,14 @@ ClockSweepTick(void)
 				SpinLockRelease(&StrategyControl->buffer_strategy_lock);
 			}
 		}
+	}
+	skip_count = GetBufferDescriptor(victim)->skip_count;
+	if (skip_count != 0)
+	{
+		uint32 expected = victim + 1;
+		pg_atomic_compare_exchange_u32(&StrategyControl->nextVictimBuffer,
+									   &expected, victim + skip_count);
+		goto Retry;
 	}
 	return victim;
 }
@@ -356,6 +372,110 @@ StrategyGetBuffer(BufferAccessStrategy strategy, uint32 *buf_state, bool *from_r
 	}
 }
 
+#ifndef MADV_REMOVE
+#define MADV_REMOVE MADV_FREE /* MacOS doesn't have MADV_REMOVE and at Linux MADV_FREE works only for MAP_PRIVATE */
+#endif
+
+
+bool
+check_available_buffers(int *newval, void **extra, GucSource source)
+{
+	return *newval <= NBuffers;
+}
+
+void
+assign_available_buffers(int newval, void *extra)
+{
+	if (newval >= 0 && StrategyControl) /* shared memory is already initialized */
+		ResizeSharedBuffers(newval);
+}
+
+/*
+ * Return sp[ace used by shared buffers to OS.
+ * It is done by "punching" holes using madvise.
+ * First we try to reclaim free buffers and of it is not enough,
+ * then do iterations of CLOCK algorithm until enpiugh buffers are reclaimed.
+ */
+void
+ResizeSharedBuffers(int availableBuffers)
+{
+	Block		buf_block;
+	Buffer 		buf;
+	BufferDesc* buf_desc;
+	char*       bitmap = palloc0((NBuffers + 7) / 8);
+	int         skip_count;
+
+	Assert(availableBuffers >= 16 && availableBuffers <= NBuffers);
+	elog(LOG, "Resize shared buffers: nPunchedBuffers=%d, avaiableBuffers=%d", StrategyControl->nPunchedBuffers, availableBuffers);
+	/*
+	 * Shrink shared buffers.
+	 *
+	 * We are accessing StrategyControl->punchedBuffer without lock,
+	 * so there can be race condition, but precise value of
+	 * piunched buffers is not needed.
+	 */
+	while (NBuffers - StrategyControl->nPunchedBuffers > availableBuffers)
+	{
+		buf = GetVictimBuffer(NULL,  IOCONTEXT_NORMAL) - 1;
+		buf_desc = GetBufferDescriptor(buf);
+		buf_block = BufHdrGetBlock(buf_desc);
+		if (madvise(buf_block, BLCKSZ, MADV_REMOVE) < 0)
+			elog(ERROR, "Faield to punch buffer: %m");
+
+		/* Prevent buffer refcount leak warning */
+		ForgetPrivateRefCount(buf + 1);
+
+		/* Acquire the spinlock to add element to punched list */
+		SpinLockAcquire(&StrategyControl->buffer_strategy_lock);
+		StrategyControl->nPunchedBuffers += 1;
+		buf_desc->freeNext = StrategyControl->firstPunchedBuffer;
+		StrategyControl->firstPunchedBuffer = buf;
+		SpinLockRelease(&StrategyControl->buffer_strategy_lock);
+	}
+
+	/*
+	 * Extend shared buffers: return punched buffers to free buffers list
+	 *
+	 * We do not perform expensive operations here, so do everything under spinlock
+	 */
+	SpinLockAcquire(&StrategyControl->buffer_strategy_lock);
+	while (NBuffers - StrategyControl->nPunchedBuffers < availableBuffers)
+	{
+		buf = StrategyControl->firstPunchedBuffer;
+		Assert(buf >= 0);
+		buf_desc = GetBufferDescriptor(buf);
+		Assert(buf_desc->freeNext != FREENEXT_NOT_IN_LIST);
+		StrategyControl->firstPunchedBuffer = buf_desc->freeNext;
+		StrategyControl->nPunchedBuffers -= 1;
+
+		/* Decrement access count */
+		/* Nobody else can try in change state of punched buffer */
+		pg_atomic_write_u32(&buf_desc->state, 0);
+
+		/* Insert buffer in free list */
+		buf_desc->freeNext = StrategyControl->firstFreeBuffer;
+		if (buf_desc->freeNext < 0)
+			StrategyControl->lastFreeBuffer = buf;
+		StrategyControl->firstFreeBuffer = buf;
+	}
+
+	for (buf = StrategyControl->firstPunchedBuffer; buf != FREENEXT_END_OF_LIST; buf = buf_desc->freeNext)
+	{
+		bitmap[buf >> 3] |= 1 << (buf & 7);
+		buf_desc = GetBufferDescriptor(buf);
+	}
+	for (buf = NBuffers, skip_count = 0; buf--; )
+	{
+		buf_desc = GetBufferDescriptor(buf);
+		buf_desc->skip_count = skip_count;
+		skip_count = (bitmap[buf >> 3] & (1 << (buf & 7))) ? skip_count + 1 : 0;
+	}
+	pfree(bitmap);
+
+	SpinLockRelease(&StrategyControl->buffer_strategy_lock);
+}
+
+
 /*
  * StrategyFreeBuffer: put a buffer on the freelist
  */
@@ -511,6 +631,9 @@ StrategyInitialize(bool init)
 		StrategyControl->firstFreeBuffer = 0;
 		StrategyControl->lastFreeBuffer = NBuffers - 1;
 
+		StrategyControl->firstPunchedBuffer = FREENEXT_END_OF_LIST;
+		StrategyControl->nPunchedBuffers = 0;
+
 		/* Initialize the clock sweep pointer */
 		pg_atomic_init_u32(&StrategyControl->nextVictimBuffer, 0);
 
@@ -520,6 +643,13 @@ StrategyInitialize(bool init)
 
 		/* No pending notification */
 		StrategyControl->bgwprocno = -1;
+
+		if (AvailableBuffers >= 0)
+		{
+			CurrentResourceOwner = ResourceOwnerCreate(NULL, "DummyOwner");
+			ResizeSharedBuffers(AvailableBuffers);
+			ResourceOwnerDelete(CurrentResourceOwner);
+		}
 	}
 	else
 		Assert(!init);
@@ -596,7 +726,7 @@ GetAccessStrategyWithSize(BufferAccessStrategyType btype, int ring_size_kb)
 		return NULL;
 
 	/* Cap to 1/8th of shared_buffers */
-	ring_buffers = Min(NBuffers / 8, ring_buffers);
+	ring_buffers = Min(GetAvailableBuffers() / 8, ring_buffers);
 
 	/* NBuffers should never be less than 16, so this shouldn't happen */
 	Assert(ring_buffers > 0);
