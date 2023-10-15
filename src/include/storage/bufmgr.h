@@ -14,10 +14,12 @@
 #ifndef BUFMGR_H
 #define BUFMGR_H
 
+#include "pgstat.h"
 #include "storage/block.h"
 #include "storage/buf.h"
 #include "storage/bufpage.h"
 #include "storage/relfilelocator.h"
+#include "utils/guc.h"
 #include "utils/relcache.h"
 #include "utils/snapmgr.h"
 
@@ -105,6 +107,10 @@ typedef struct BufferManagerRelation
 
 #define BMR_REL(p_rel) ((BufferManagerRelation){.rel = p_rel})
 #define BMR_SMGR(p_smgr, p_relpersistence) ((BufferManagerRelation){.smgr = p_smgr, .relpersistence = p_relpersistence})
+
+/* Note: these two macros only work on shared buffers, not local ones! */
+#define BufHdrGetBlock(bufHdr)	((Block) (BufferBlocks + ((Size) (bufHdr)->buf_id) * BLCKSZ))
+#define BufferGetLSN(bufHdr)	(PageGetLSN(BufHdrGetBlock(bufHdr)))
 
 
 /* forward declared, to avoid having to expose buf_internals.h here */
@@ -266,6 +272,19 @@ extern int	GetAccessStrategyBufferCount(BufferAccessStrategy strategy);
 
 extern void FreeAccessStrategy(BufferAccessStrategy strategy);
 
+extern Buffer GetVictimBuffer(BufferAccessStrategy strategy, IOContext io_context);
+
+/* Dynamic shared buffer resize support */
+extern int AvailableBuffers;
+
+#define GetAvailableBuffers() (AvailableBuffers > 0 ? AvailableBuffers : NBuffers)
+
+extern bool check_available_buffers(int *newval, void **extra, GucSource source);
+extern void assign_available_buffers(int newval, void *extra);
+
+extern void ResizeSharedBuffers(int availableBuffers);
+
+extern void ForgetPrivateRefCount(Buffer buf);
 
 /* inline functions */
 

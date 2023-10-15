@@ -2245,6 +2245,17 @@ struct config_int ConfigureNamesInt[] =
 	},
 
 	{
+		{"available_buffers", PGC_SIGHUP, RESOURCES_MEM,
+			gettext_noop("Sets the number of shared memory buffers available for the server. -1 means that all buffers are avaiable."),
+			NULL,
+			GUC_UNIT_BLOCKS
+		},
+		&AvailableBuffers,
+		-1, -1, INT_MAX,
+		check_available_buffers, assign_available_buffers, NULL
+	},
+
+	{
 		{"vacuum_buffer_usage_limit", PGC_USERSET, RESOURCES_MEM,
 			gettext_noop("Sets the buffer pool size for VACUUM, ANALYZE, and autovacuum."),
 			NULL,

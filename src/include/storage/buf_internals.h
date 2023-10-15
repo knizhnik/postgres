@@ -251,6 +251,7 @@ typedef struct BufferDesc
 
 	int			wait_backend_pgprocno;	/* backend of pin-count waiter */
 	int			freeNext;		/* link in freelist chain */
+	int			skip_count;		/* number of subsequent reserved (not available) buffers, use to speed-up CLOCK algorithm in case of presence of not avaiable buffers */
 	LWLock		content_lock;	/* to lock access to buffer contents */
 } BufferDesc;
 

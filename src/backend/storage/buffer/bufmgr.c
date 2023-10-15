@@ -59,10 +59,6 @@
 #include "utils/timestamp.h"
 
 
-/* Note: these two macros only work on shared buffers, not local ones! */
-#define BufHdrGetBlock(bufHdr)	((Block) (BufferBlocks + ((Size) (bufHdr)->buf_id) * BLCKSZ))
-#define BufferGetLSN(bufHdr)	(PageGetLSN(BufHdrGetBlock(bufHdr)))
-
 /* Note: this macro only works on local buffers, not shared ones! */
 #define LocalBufHdrGetBlock(bufHdr) \
 	LocalBufferBlockPointers[-((bufHdr)->buf_id + 2)]
@@ -428,6 +424,15 @@ ForgetPrivateRefCountEntry(PrivateRefCountEntry *ref)
 	}
 }
 
+
+void
+ForgetPrivateRefCount(Buffer buf)
+{
+	PrivateRefCountEntry *ref = GetPrivateRefCountEntry(buf, false);
+	ForgetPrivateRefCountEntry(ref);
+	ResourceOwnerForgetBuffer(CurrentResourceOwner, buf);
+}
+
 /*
  * BufferIsPinned
  *		True iff the buffer is pinned (also checks for valid buffer number).
@@ -486,7 +491,6 @@ static BufferDesc *BufferAlloc(SMgrRelation smgr,
 							   BlockNumber blockNum,
 							   BufferAccessStrategy strategy,
 							   bool *foundPtr, IOContext io_context);
-static Buffer GetVictimBuffer(BufferAccessStrategy strategy, IOContext io_context);
 static void FlushBuffer(BufferDesc *buf, SMgrRelation reln,
 						IOObject io_object, IOContext io_context);
 static void FindAndDropRelationBuffers(RelFileLocator rlocator,
@@ -1581,7 +1585,7 @@ InvalidateVictimBuffer(BufferDesc *buf_hdr)
 	return true;
 }
 
-static Buffer
+Buffer
 GetVictimBuffer(BufferAccessStrategy strategy, IOContext io_context)
 {
 	BufferDesc *buf_hdr;
@@ -1757,7 +1761,7 @@ LimitAdditionalPins(uint32 *additional_pins)
 		return;
 
 	max_backends = MaxBackends + NUM_AUXILIARY_PROCS;
-	max_proportional_pins = NBuffers / max_backends;
+	max_proportional_pins = GetAvailableBuffers() / max_backends;
 
 	/*
 	 * Subtract the approximate number of buffers already pinned by this

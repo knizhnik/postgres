@@ -4264,7 +4264,7 @@ XLOGChooseNumBuffers(void)
 {
 	int			xbuffers;
 
-	xbuffers = NBuffers / 32;
+	xbuffers = GetAvailableBuffers() / 32;
 	if (xbuffers > (wal_segment_size / XLOG_BLCKSZ))
 		xbuffers = (wal_segment_size / XLOG_BLCKSZ);
 	if (xbuffers < 8)
