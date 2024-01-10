@@ -3,7 +3,7 @@
  * fe-auth-scram.c
  *	   The front-end (client) implementation of SCRAM authentication.
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -46,7 +46,7 @@ typedef enum
 	FE_SCRAM_INIT,
 	FE_SCRAM_NONCE_SENT,
 	FE_SCRAM_PROOF_SENT,
-	FE_SCRAM_FINISHED
+	FE_SCRAM_FINISHED,
 } fe_scram_state_enum;
 
 typedef struct

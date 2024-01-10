@@ -3,7 +3,7 @@
  * walsender.h
  *	  Exports from replication/walsender.c.
  *
- * Portions Copyright (c) 2010-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2010-2024, PostgreSQL Global Development Group
  *
  * src/include/replication/walsender.h
  *
@@ -12,8 +12,6 @@
 #ifndef _WALSENDER_H
 #define _WALSENDER_H
 
-#include <signal.h>
-
 /*
  * What to do with a snapshot in create replication slot command.
  */
@@ -21,7 +19,7 @@ typedef enum
 {
 	CRS_EXPORT_SNAPSHOT,
 	CRS_NOEXPORT_SNAPSHOT,
-	CRS_USE_SNAPSHOT
+	CRS_USE_SNAPSHOT,
 } CRSSnapshotAction;
 
 /* global state */

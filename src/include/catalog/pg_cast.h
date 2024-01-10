@@ -6,7 +6,7 @@
  * As of Postgres 8.0, pg_cast describes not only type coercion functions
  * but also length coercion functions.
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/catalog/pg_cast.h
@@ -74,8 +74,8 @@ typedef enum CoercionCodes
 {
 	COERCION_CODE_IMPLICIT = 'i',	/* coercion in context of expression */
 	COERCION_CODE_ASSIGNMENT = 'a', /* coercion in context of assignment */
-	COERCION_CODE_EXPLICIT = 'e'	/* explicit cast operation */
-} CoercionCodes;
+	COERCION_CODE_EXPLICIT = 'e',	/* explicit cast operation */
+}			CoercionCodes;
 
 /*
  * The allowable values for pg_cast.castmethod are specified by this enum.
@@ -86,8 +86,8 @@ typedef enum CoercionMethod
 {
 	COERCION_METHOD_FUNCTION = 'f', /* use a function */
 	COERCION_METHOD_BINARY = 'b',	/* types are binary-compatible */
-	COERCION_METHOD_INOUT = 'i' /* use input/output functions */
-} CoercionMethod;
+	COERCION_METHOD_INOUT = 'i',	/* use input/output functions */
+}			CoercionMethod;
 
 #endif							/* EXPOSE_TO_CLIENT_CODE */
 

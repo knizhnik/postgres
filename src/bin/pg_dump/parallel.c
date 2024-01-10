@@ -4,7 +4,7 @@
  *
  *	Parallel support for pg_dump and pg_restore
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -77,7 +77,7 @@ typedef enum
 	WRKR_NOT_STARTED = 0,
 	WRKR_IDLE,
 	WRKR_WORKING,
-	WRKR_TERMINATED
+	WRKR_TERMINATED,
 } T_WorkerStatus;
 
 #define WORKER_IS_RUNNING(workerStatus) \

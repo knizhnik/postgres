@@ -3,7 +3,7 @@
  * subscriptioncmds.c
  *		subscription catalog manipulation functions
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -773,7 +773,7 @@ CreateSubscription(ParseState *pstate, CreateSubscriptionStmt *stmt,
 										 rv->schemaname, rv->relname);
 
 				AddSubscriptionRelState(subid, relid, table_state,
-										InvalidXLogRecPtr);
+										InvalidXLogRecPtr, true);
 			}
 
 			/*
@@ -869,7 +869,7 @@ AlterSubscription_refresh(Subscription *sub, bool copy_data,
 	load_file("libpqwalreceiver", false);
 
 	/* Try to connect to the publisher. */
-	must_use_password = !superuser_arg(sub->owner) && sub->passwordrequired;
+	must_use_password = sub->passwordrequired && !sub->ownersuperuser;
 	wrconn = walrcv_connect(sub->conninfo, true, must_use_password,
 							sub->name, &err);
 	if (!wrconn)
@@ -943,7 +943,7 @@ AlterSubscription_refresh(Subscription *sub, bool copy_data,
 			{
 				AddSubscriptionRelState(sub->oid, relid,
 										copy_data ? SUBREL_STATE_INIT : SUBREL_STATE_READY,
-										InvalidXLogRecPtr);
+										InvalidXLogRecPtr, true);
 				ereport(DEBUG1,
 						(errmsg_internal("table \"%s.%s\" added to subscription \"%s\"",
 										 rv->schemaname, rv->relname, sub->name)));
@@ -1249,7 +1249,7 @@ AlterSubscription(ParseState *pstate, AlterSubscriptionStmt *stmt,
 			load_file("libpqwalreceiver", false);
 			/* Check the connection info string. */
 			walrcv_check_conninfo(stmt->conninfo,
-								  sub->passwordrequired && !superuser_arg(sub->owner));
+								  sub->passwordrequired && !sub->ownersuperuser);
 
 			values[Anum_pg_subscription_subconninfo - 1] =
 				CStringGetTextDatum(stmt->conninfo);

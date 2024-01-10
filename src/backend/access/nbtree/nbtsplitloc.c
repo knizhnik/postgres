@@ -3,7 +3,7 @@
  * nbtsplitloc.c
  *	  Choose split point code for Postgres btree implementation.
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -22,7 +22,7 @@ typedef enum
 	/* strategy for searching through materialized list of split points */
 	SPLIT_DEFAULT,				/* give some weight to truncation */
 	SPLIT_MANY_DUPLICATES,		/* find minimally distinguishing point */
-	SPLIT_SINGLE_VALUE			/* leave left page almost full */
+	SPLIT_SINGLE_VALUE,			/* leave left page almost full */
 } FindSplitStrat;
 
 typedef struct

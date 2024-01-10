@@ -3,7 +3,7 @@
  * relpath.h
  *		Declarations for GetRelationPath() and friends
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/common/relpath.h
@@ -50,7 +50,7 @@ typedef enum ForkNumber
 	MAIN_FORKNUM = 0,
 	FSM_FORKNUM,
 	VISIBILITYMAP_FORKNUM,
-	INIT_FORKNUM
+	INIT_FORKNUM,
 
 	/*
 	 * NOTE: if you add a new fork, change MAX_FORKNUM and possibly

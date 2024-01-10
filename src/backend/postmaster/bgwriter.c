@@ -21,7 +21,7 @@
  * should be killed by SIGQUIT and then a recovery cycle started.
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  *
  *
  * IDENTIFICATION
@@ -182,7 +182,7 @@ BackgroundWriterMain(void)
 		FlushErrorState();
 
 		/* Flush any leaked data in the top-level context */
-		MemoryContextResetAndDeleteChildren(bgwriter_context);
+		MemoryContextReset(bgwriter_context);
 
 		/* re-initialize to avoid repeated errors causing problems */
 		WritebackContextInit(&wb_context, &bgwriter_flush_after);

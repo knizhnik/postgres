@@ -3,7 +3,7 @@
  * functions.c
  *	  Execution of SQL-language functions
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -59,7 +59,7 @@ typedef struct
  */
 typedef enum
 {
-	F_EXEC_START, F_EXEC_RUN, F_EXEC_DONE
+	F_EXEC_START, F_EXEC_RUN, F_EXEC_DONE,
 } ExecStatus;
 
 typedef struct execution_state

@@ -8,7 +8,7 @@
  * should end up here.
  *
  *
- * Copyright (c) 2016-2023, PostgreSQL Global Development Group
+ * Copyright (c) 2016-2024, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/jit/jit.c
@@ -26,7 +26,6 @@
 #include "jit/jit.h"
 #include "miscadmin.h"
 #include "utils/fmgrprotos.h"
-#include "utils/resowner_private.h"
 
 /* GUCs */
 bool		jit_enabled = true;
@@ -140,7 +139,6 @@ jit_release_context(JitContext *context)
 	if (provider_successfully_loaded)
 		provider.release_context(context);
 
-	ResourceOwnerForgetJIT(context->resowner, PointerGetDatum(context));
 	pfree(context);
 }
 

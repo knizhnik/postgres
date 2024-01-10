@@ -4,7 +4,7 @@
  *	  Routines to multiplex SIGALRM interrupts for multiple timeout reasons.
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/utils/timeout.h
@@ -51,7 +51,7 @@ typedef enum TimeoutType
 {
 	TMPARAM_AFTER,
 	TMPARAM_AT,
-	TMPARAM_EVERY
+	TMPARAM_EVERY,
 } TimeoutType;
 
 typedef struct

@@ -2,7 +2,7 @@
  * reorderbuffer.h
  *	  PostgreSQL logical replay/reorder buffer management.
  *
- * Copyright (c) 2012-2023, PostgreSQL Global Development Group
+ * Copyright (c) 2012-2024, PostgreSQL Global Development Group
  *
  * src/include/replication/reorderbuffer.h
  */
@@ -25,7 +25,7 @@ extern PGDLLIMPORT int debug_logical_replication_streaming;
 typedef enum
 {
 	DEBUG_LOGICAL_REP_STREAMING_BUFFERED,
-	DEBUG_LOGICAL_REP_STREAMING_IMMEDIATE
+	DEBUG_LOGICAL_REP_STREAMING_IMMEDIATE,
 }			DebugLogicalRepStreamingMode;
 
 /* an individual tuple, stored in one chunk of memory */
@@ -73,7 +73,7 @@ typedef enum ReorderBufferChangeType
 	REORDER_BUFFER_CHANGE_INTERNAL_SPEC_INSERT,
 	REORDER_BUFFER_CHANGE_INTERNAL_SPEC_CONFIRM,
 	REORDER_BUFFER_CHANGE_INTERNAL_SPEC_ABORT,
-	REORDER_BUFFER_CHANGE_TRUNCATE
+	REORDER_BUFFER_CHANGE_TRUNCATE,
 } ReorderBufferChangeType;
 
 /* forward declaration */

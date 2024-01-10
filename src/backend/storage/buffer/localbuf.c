@@ -4,7 +4,7 @@
  *	  local buffer manager. Fast buffer manager for temporary tables,
  *	  which never need to be WAL-logged or checkpointed, etc.
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994-5, Regents of the University of California
  *
  *
@@ -21,9 +21,10 @@
 #include "pgstat.h"
 #include "storage/buf_internals.h"
 #include "storage/bufmgr.h"
+#include "storage/fd.h"
 #include "utils/guc_hooks.h"
 #include "utils/memutils.h"
-#include "utils/resowner_private.h"
+#include "utils/resowner.h"
 
 
 /*#define LBDEBUG*/
@@ -93,7 +94,7 @@ PrefetchLocalBuffer(SMgrRelation smgr, ForkNumber forkNum,
 #ifdef USE_PREFETCH
 		/* Not in buffers, so initiate prefetch */
 		if ((io_direct_flags & IO_DIRECT_DATA) == 0 &&
-			smgrprefetch(smgr, forkNum, blockNum))
+			smgrprefetch(smgr, forkNum, blockNum, 1))
 		{
 			result.initiated_io = true;
 		}
@@ -129,6 +130,8 @@ LocalBufferAlloc(SMgrRelation smgr, ForkNumber forkNum, BlockNumber blockNum,
 	/* Initialize local buffers if first request in this session */
 	if (LocalBufHash == NULL)
 		InitLocalBuffers();
+
+	ResourceOwnerEnlarge(CurrentResourceOwner);
 
 	/* See if the desired buffer already exists */
 	hresult = (LocalBufferLookupEnt *)
@@ -180,7 +183,7 @@ GetLocalVictimBuffer(void)
 	uint32		buf_state;
 	BufferDesc *bufHdr;
 
-	ResourceOwnerEnlargeBuffers(CurrentResourceOwner);
+	ResourceOwnerEnlarge(CurrentResourceOwner);
 
 	/*
 	 * Need to get a new buffer.  We use a clock sweep algorithm (essentially
@@ -243,7 +246,7 @@ GetLocalVictimBuffer(void)
 
 		PageSetChecksumInplace(localpage, bufHdr->tag.blockNum);
 
-		io_start = pgstat_prepare_io_time();
+		io_start = pgstat_prepare_io_time(track_io_timing);
 
 		/* And write... */
 		smgrwrite(oreln,
@@ -377,7 +380,7 @@ ExtendBufferedRelLocal(BufferManagerRelation bmr,
 			hash_search(LocalBufHash, (void *) &tag, HASH_ENTER, &found);
 		if (found)
 		{
-			BufferDesc *existing_hdr = GetLocalBufferDescriptor(hresult->id);
+			BufferDesc *existing_hdr;
 			uint32		buf_state;
 
 			UnpinLocalBuffer(BufferDescriptorGetBuffer(victim_buf_hdr));
@@ -389,7 +392,7 @@ ExtendBufferedRelLocal(BufferManagerRelation bmr,
 			buf_state = pg_atomic_read_u32(&existing_hdr->state);
 			Assert(buf_state & BM_TAG_VALID);
 			Assert(!(buf_state & BM_DIRTY));
-			buf_state &= BM_VALID;
+			buf_state &= ~BM_VALID;
 			pg_atomic_unlocked_write_u32(&existing_hdr->state, buf_state);
 		}
 		else
@@ -408,7 +411,7 @@ ExtendBufferedRelLocal(BufferManagerRelation bmr,
 		}
 	}
 
-	io_start = pgstat_prepare_io_time();
+	io_start = pgstat_prepare_io_time(track_io_timing);
 
 	/* actually extend relation */
 	smgrzeroextend(bmr.smgr, fork, first_block, extend_by, false);
@@ -673,13 +676,19 @@ PinLocalBuffer(BufferDesc *buf_hdr, bool adjust_usagecount)
 void
 UnpinLocalBuffer(Buffer buffer)
 {
+	UnpinLocalBufferNoOwner(buffer);
+	ResourceOwnerForgetBuffer(CurrentResourceOwner, buffer);
+}
+
+void
+UnpinLocalBufferNoOwner(Buffer buffer)
+{
 	int			buffid = -buffer - 1;
 
 	Assert(BufferIsLocal(buffer));
 	Assert(LocalRefCount[buffid] > 0);
 	Assert(NLocalPinnedBuffers > 0);
 
-	ResourceOwnerForgetBuffer(CurrentResourceOwner, buffer);
 	if (--LocalRefCount[buffid] == 0)
 		NLocalPinnedBuffers--;
 }
@@ -696,7 +705,7 @@ check_temp_buffers(int *newval, void **extra, GucSource source)
 	 */
 	if (source != PGC_S_TEST && NLocBuffer && NLocBuffer != *newval)
 	{
-		GUC_check_errdetail("\"temp_buffers\" cannot be changed after any temporary tables have been accessed in the session.");
+		GUC_check_errdetail("temp_buffers cannot be changed after any temporary tables have been accessed in the session.");
 		return false;
 	}
 	return true;
@@ -783,8 +792,12 @@ CheckForLocalBufferLeaks(void)
 			if (LocalRefCount[i] != 0)
 			{
 				Buffer		b = -i - 1;
+				char	   *s;
 
-				PrintBufferLeakWarning(b);
+				s = DebugPrintBufferRefcount(b);
+				elog(WARNING, "local buffer refcount leak: %s", s);
+				pfree(s);
+
 				RefCountErrors++;
 			}
 		}

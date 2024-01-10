@@ -4,7 +4,7 @@
  *	  prototypes for postgres.c.
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/tcop/tcopprot.h
@@ -15,7 +15,6 @@
 #define TCOPPROT_H
 
 #include "nodes/params.h"
-#include "nodes/parsenodes.h"
 #include "nodes/plannodes.h"
 #include "storage/procsignal.h"
 #include "utils/guc.h"
@@ -38,7 +37,7 @@ typedef enum
 	LOGSTMT_NONE,				/* log no statements */
 	LOGSTMT_DDL,				/* log data definition statements */
 	LOGSTMT_MOD,				/* log modification statements, plus DDL */
-	LOGSTMT_ALL					/* log all statements */
+	LOGSTMT_ALL,				/* log all statements */
 } LogStmtLevel;
 
 extern PGDLLIMPORT int log_statement;

@@ -417,8 +417,8 @@ SELECT sessions AS db_stat_sessions FROM pg_stat_database WHERE datname = (SELEC
 SELECT pg_stat_force_next_flush();
 SELECT sessions > :db_stat_sessions FROM pg_stat_database WHERE datname = (SELECT current_database());
 
--- Test pg_stat_bgwriter checkpointer-related stats, together with pg_stat_wal
-SELECT checkpoints_req AS rqst_ckpts_before FROM pg_stat_bgwriter \gset
+-- Test pg_stat_checkpointer checkpointer-related stats, together with pg_stat_wal
+SELECT num_requested AS rqst_ckpts_before FROM pg_stat_checkpointer \gset
 
 -- Test pg_stat_wal (and make a temp table so our temp schema exists)
 SELECT wal_bytes AS wal_bytes_before FROM pg_stat_wal \gset
@@ -432,7 +432,7 @@ DROP TABLE test_stats_temp;
 CHECKPOINT;
 CHECKPOINT;
 
-SELECT checkpoints_req > :rqst_ckpts_before FROM pg_stat_bgwriter;
+SELECT num_requested > :rqst_ckpts_before FROM pg_stat_checkpointer;
 SELECT wal_bytes > :wal_bytes_before FROM pg_stat_wal;
 
 -- Test pg_stat_get_backend_idset() and some allied functions.
@@ -454,7 +454,7 @@ SELECT stats_reset > :'slru_commit_ts_reset_ts'::timestamptz FROM pg_stat_slru W
 SELECT stats_reset AS slru_commit_ts_reset_ts FROM pg_stat_slru WHERE name = 'CommitTs' \gset
 
 -- Test that multiple SLRUs are reset when no specific SLRU provided to reset function
-SELECT pg_stat_reset_slru(NULL);
+SELECT pg_stat_reset_slru();
 SELECT stats_reset > :'slru_commit_ts_reset_ts'::timestamptz FROM pg_stat_slru WHERE name = 'CommitTs';
 SELECT stats_reset > :'slru_notify_reset_ts'::timestamptz FROM pg_stat_slru WHERE name = 'Notify';
 
@@ -462,25 +462,34 @@ SELECT stats_reset > :'slru_notify_reset_ts'::timestamptz FROM pg_stat_slru WHER
 SELECT stats_reset AS archiver_reset_ts FROM pg_stat_archiver \gset
 SELECT pg_stat_reset_shared('archiver');
 SELECT stats_reset > :'archiver_reset_ts'::timestamptz FROM pg_stat_archiver;
-SELECT stats_reset AS archiver_reset_ts FROM pg_stat_archiver \gset
 
 -- Test that reset_shared with bgwriter specified as the stats type works
 SELECT stats_reset AS bgwriter_reset_ts FROM pg_stat_bgwriter \gset
 SELECT pg_stat_reset_shared('bgwriter');
 SELECT stats_reset > :'bgwriter_reset_ts'::timestamptz FROM pg_stat_bgwriter;
-SELECT stats_reset AS bgwriter_reset_ts FROM pg_stat_bgwriter \gset
+
+-- Test that reset_shared with checkpointer specified as the stats type works
+SELECT stats_reset AS checkpointer_reset_ts FROM pg_stat_checkpointer \gset
+SELECT pg_stat_reset_shared('checkpointer');
+SELECT stats_reset > :'checkpointer_reset_ts'::timestamptz FROM pg_stat_checkpointer;
+
+-- Test that reset_shared with recovery_prefetch specified as the stats type works
+SELECT stats_reset AS recovery_prefetch_reset_ts FROM pg_stat_recovery_prefetch \gset
+SELECT pg_stat_reset_shared('recovery_prefetch');
+SELECT stats_reset > :'recovery_prefetch_reset_ts'::timestamptz FROM pg_stat_recovery_prefetch;
+
+-- Test that reset_shared with slru specified as the stats type works
+SELECT max(stats_reset) AS slru_reset_ts FROM pg_stat_slru \gset
+SELECT pg_stat_reset_shared('slru');
+SELECT max(stats_reset) > :'slru_reset_ts'::timestamptz FROM pg_stat_slru;
 
 -- Test that reset_shared with wal specified as the stats type works
 SELECT stats_reset AS wal_reset_ts FROM pg_stat_wal \gset
 SELECT pg_stat_reset_shared('wal');
 SELECT stats_reset > :'wal_reset_ts'::timestamptz FROM pg_stat_wal;
-SELECT stats_reset AS wal_reset_ts FROM pg_stat_wal \gset
 
--- Test that reset_shared with no specified stats type doesn't reset anything
-SELECT pg_stat_reset_shared(NULL);
-SELECT stats_reset = :'archiver_reset_ts'::timestamptz FROM pg_stat_archiver;
-SELECT stats_reset = :'bgwriter_reset_ts'::timestamptz FROM pg_stat_bgwriter;
-SELECT stats_reset = :'wal_reset_ts'::timestamptz FROM pg_stat_wal;
+-- Test error case for reset_shared with unknown stats type
+SELECT pg_stat_reset_shared('unknown');
 
 -- Test that reset works for pg_stat_database
 

@@ -4,7 +4,7 @@
  *	  definition of the "database" system catalog (pg_database)
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/catalog/pg_database.h
@@ -48,6 +48,9 @@ CATALOG(pg_database,1262,DatabaseRelationId) BKI_SHARED_RELATION BKI_ROWTYPE_OID
 
 	/* new connections allowed? */
 	bool		datallowconn;
+
+	/* database has login event triggers? */
+	bool		dathasloginevt;
 
 	/*
 	 * Max connections allowed. Negative values have special meaning, see

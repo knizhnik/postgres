@@ -1,7 +1,7 @@
 /*
  *	pg_upgrade.h
  *
- *	Copyright (c) 2010-2023, PostgreSQL Global Development Group
+ *	Copyright (c) 2010-2024, PostgreSQL Global Development Group
  *	src/bin/pg_upgrade/pg_upgrade.h
  */
 
@@ -151,6 +151,24 @@ typedef struct
 } RelInfoArr;
 
 /*
+ * Structure to store logical replication slot information.
+ */
+typedef struct
+{
+	char	   *slotname;		/* slot name */
+	char	   *plugin;			/* plugin */
+	bool		two_phase;		/* can the slot decode 2PC? */
+	bool		caught_up;		/* has the slot caught up to latest changes? */
+	bool		invalid;		/* if true, the slot is unusable */
+} LogicalSlotInfo;
+
+typedef struct
+{
+	int			nslots;			/* number of logical slot infos */
+	LogicalSlotInfo *slots;		/* array of logical slot infos */
+} LogicalSlotInfoArr;
+
+/*
  * The following structure represents a relation mapping.
  */
 typedef struct
@@ -176,6 +194,8 @@ typedef struct
 	char		db_tablespace[MAXPGPATH];	/* database default tablespace
 											 * path */
 	RelInfoArr	rel_arr;		/* array of all user relinfos */
+	LogicalSlotInfoArr slot_arr;	/* array of all LogicalSlotInfo */
+	int			nsubs;			/* number of subscriptions */
 } DbInfo;
 
 /*
@@ -234,7 +254,7 @@ typedef enum
 {
 	TRANSFER_MODE_CLONE,
 	TRANSFER_MODE_COPY,
-	TRANSFER_MODE_LINK
+	TRANSFER_MODE_LINK,
 } transferMode;
 
 /*
@@ -247,7 +267,7 @@ typedef enum
 	PG_REPORT_NONL,				/* these too */
 	PG_REPORT,
 	PG_WARNING,
-	PG_FATAL
+	PG_FATAL,
 } eLogType;
 
 
@@ -400,7 +420,9 @@ void		check_loadable_libraries(void);
 FileNameMap *gen_db_file_maps(DbInfo *old_db,
 							  DbInfo *new_db, int *nmaps, const char *old_pgdata,
 							  const char *new_pgdata);
-void		get_db_and_rel_infos(ClusterInfo *cluster);
+void		get_db_rel_and_slot_infos(ClusterInfo *cluster, bool live_check);
+int			count_old_cluster_logical_slots(void);
+int			count_old_cluster_subscriptions(void);
 
 /* option.c */
 

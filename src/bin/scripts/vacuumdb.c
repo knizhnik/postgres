@@ -2,7 +2,7 @@
  *
  * vacuumdb
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/bin/scripts/vacuumdb.c
@@ -57,7 +57,7 @@ typedef enum
 	OBJFILTER_DATABASE = (1 << 1),	/* -d | --dbname */
 	OBJFILTER_TABLE = (1 << 2), /* -t | --table */
 	OBJFILTER_SCHEMA = (1 << 3),	/* -n | --schema */
-	OBJFILTER_SCHEMA_EXCLUDE = (1 << 4) /* -N | --exclude-schema */
+	OBJFILTER_SCHEMA_EXCLUDE = (1 << 4),	/* -N | --exclude-schema */
 } VacObjFilter;
 
 VacObjFilter objfilter = OBJFILTER_NONE;

@@ -3,7 +3,7 @@
  * nodeModifyTable.c
  *	  routines to handle ModifyTable nodes.
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -1425,6 +1425,7 @@ ExecDelete(ModifyTableContext *context,
 		   bool processReturning,
 		   bool changingPart,
 		   bool canSetTag,
+		   TM_Result *tmresult,
 		   bool *tupleDeleted,
 		   TupleTableSlot **epqreturnslot)
 {
@@ -1441,7 +1442,7 @@ ExecDelete(ModifyTableContext *context,
 	 * done if it says we are.
 	 */
 	if (!ExecDeletePrologue(context, resultRelInfo, tupleid, oldtuple,
-							epqreturnslot, NULL))
+							epqreturnslot, tmresult))
 		return NULL;
 
 	/* INSTEAD OF ROW DELETE Triggers */
@@ -1495,6 +1496,9 @@ ExecDelete(ModifyTableContext *context,
 		 */
 ldelete:
 		result = ExecDeleteAct(context, resultRelInfo, tupleid, changingPart);
+
+		if (tmresult)
+			*tmresult = result;
 
 		switch (result)
 		{
@@ -1734,6 +1738,7 @@ ExecCrossPartitionUpdate(ModifyTableContext *context,
 						 TupleTableSlot *slot,
 						 bool canSetTag,
 						 UpdateContext *updateCxt,
+						 TM_Result *tmresult,
 						 TupleTableSlot **retry_slot,
 						 TupleTableSlot **inserted_tuple,
 						 ResultRelInfo **insert_destrel)
@@ -1797,7 +1802,7 @@ ExecCrossPartitionUpdate(ModifyTableContext *context,
 			   false,			/* processReturning */
 			   true,			/* changingPart */
 			   false,			/* canSetTag */
-			   &tuple_deleted, &epqslot);
+			   tmresult, &tuple_deleted, &epqslot);
 
 	/*
 	 * For some reason if DELETE didn't happen (e.g. trigger prevented it, or
@@ -1829,7 +1834,7 @@ ExecCrossPartitionUpdate(ModifyTableContext *context,
 		 * action entirely).
 		 */
 		if (context->relaction != NULL)
-			return false;
+			return *tmresult == TM_Ok;
 		else if (TupIsNull(epqslot))
 			return true;
 		else
@@ -2031,6 +2036,7 @@ lreplace:
 		if (ExecCrossPartitionUpdate(context, resultRelInfo,
 									 tupleid, oldtuple, slot,
 									 canSetTag, updateCxt,
+									 &result,
 									 &retry_slot,
 									 &inserted_tuple,
 									 &insert_destrel))
@@ -2070,7 +2076,7 @@ lreplace:
 		 * here; instead let it handle that on its own rules.
 		 */
 		if (context->relaction != NULL)
-			return TM_Updated;
+			return result;
 
 		/*
 		 * ExecCrossPartitionUpdate installed an updated version of the new
@@ -2898,7 +2904,21 @@ lmerge_matched:
 					break;		/* concurrent update/delete */
 				}
 				result = ExecUpdateAct(context, resultRelInfo, tupleid, NULL,
-									   newslot, false, &updateCxt);
+									   newslot, canSetTag, &updateCxt);
+
+				/*
+				 * As in ExecUpdate(), if ExecUpdateAct() reports that a
+				 * cross-partition update was done, then there's nothing else
+				 * for us to do --- the UPDATE has been turned into a DELETE
+				 * and an INSERT, and we must not perform any of the usual
+				 * post-update tasks.
+				 */
+				if (updateCxt.crossPartUpdate)
+				{
+					mtstate->mt_merge_updated += 1;
+					return true;
+				}
+
 				if (result == TM_Ok && updateCxt.updated)
 				{
 					ExecUpdateEpilogue(context, &updateCxt, resultRelInfo,
@@ -3827,7 +3847,7 @@ ExecModifyTable(PlanState *pstate)
 
 			case CMD_DELETE:
 				slot = ExecDelete(&context, resultRelInfo, tupleid, oldtuple,
-								  true, false, node->canSetTag, NULL, NULL);
+								  true, false, node->canSetTag, NULL, NULL, NULL);
 				break;
 
 			case CMD_MERGE:
@@ -3966,10 +3986,10 @@ ExecInitModifyTable(ModifyTable *node, EState *estate, int eflags)
 	 *   must be converted, and
 	 * - the root partitioned table used for tuple routing.
 	 *
-	 * If it's a partitioned table, the root partition doesn't appear
-	 * elsewhere in the plan and its RT index is given explicitly in
-	 * node->rootRelation.  Otherwise (i.e. table inheritance) the target
-	 * relation is the first relation in the node->resultRelations list.
+	 * If it's a partitioned or inherited table, the root partition or
+	 * appendrel RTE doesn't appear elsewhere in the plan and its RT index is
+	 * given explicitly in node->rootRelation.  Otherwise, the target relation
+	 * is the sole relation in the node->resultRelations list.
 	 *----------
 	 */
 	if (node->rootRelation > 0)
@@ -3980,6 +4000,7 @@ ExecInitModifyTable(ModifyTable *node, EState *estate, int eflags)
 	}
 	else
 	{
+		Assert(list_length(node->resultRelations) == 1);
 		mtstate->rootResultRelInfo = mtstate->resultRelInfo;
 		ExecInitResultRelation(estate, mtstate->resultRelInfo,
 							   linitial_int(node->resultRelations));

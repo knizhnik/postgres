@@ -9,7 +9,7 @@
 #   The main Makefile in this directory defers to this helper file when
 #   building the sslfiles-related targets.
 #
-# Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+# Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
 # Portions Copyright (c) 1994, Regents of the University of California
 #
 # src/test/ssl/sslfiles.mk
@@ -269,6 +269,6 @@ sslfiles-clean:
 # clean targets will be run during a "standard" recursive clean run from the
 # main build tree. The sslfiles-clean target must be run explicitly from this
 # directory.
-.PHONY: clean distclean maintainer-clean
-clean distclean maintainer-clean:
+.PHONY: clean distclean
+clean distclean:
 	rm -rf ssl/*.old ssl/new_certs_dir ssl/client*_tmp.key

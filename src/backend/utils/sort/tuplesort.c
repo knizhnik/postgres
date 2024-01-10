@@ -88,7 +88,7 @@
  * produce exactly one output run from their partial input.
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -162,7 +162,7 @@ typedef enum
 	TSS_BUILDRUNS,				/* Loading tuples; writing to tape */
 	TSS_SORTEDINMEM,			/* Sort completed entirely in memory */
 	TSS_SORTEDONTAPE,			/* Sort completed, final run is on tape */
-	TSS_FINALMERGE				/* Performing final merge on-the-fly */
+	TSS_FINALMERGE,				/* Performing final merge on-the-fly */
 } TupSortStatus;
 
 /*
@@ -296,7 +296,7 @@ struct Tuplesortstate
 	bool		eof_reached;	/* reached EOF (needed for cursors) */
 
 	/* markpos_xxx holds marked position for mark and restore */
-	long		markpos_block;	/* tape block# (only used if SORTEDONTAPE) */
+	int64		markpos_block;	/* tape block# (only used if SORTEDONTAPE) */
 	int			markpos_offset; /* saved "current", or offset in tape block */
 	bool		markpos_eof;	/* saved "eof_reached" */
 
@@ -903,7 +903,7 @@ tuplesort_free(Tuplesortstate *state)
 	MemoryContext oldcontext = MemoryContextSwitchTo(state->base.sortcontext);
 
 #ifdef TRACE_SORT
-	long		spaceUsed;
+	int64		spaceUsed;
 
 	if (state->tapeset)
 		spaceUsed = LogicalTapeSetBlocks(state->tapeset);
@@ -928,13 +928,13 @@ tuplesort_free(Tuplesortstate *state)
 	if (trace_sort)
 	{
 		if (state->tapeset)
-			elog(LOG, "%s of worker %d ended, %ld disk blocks used: %s",
+			elog(LOG, "%s of worker %d ended, %lld disk blocks used: %s",
 				 SERIAL(state) ? "external sort" : "parallel external sort",
-				 state->worker, spaceUsed, pg_rusage_show(&state->ru_start));
+				 state->worker, (long long) spaceUsed, pg_rusage_show(&state->ru_start));
 		else
-			elog(LOG, "%s of worker %d ended, %ld KB used: %s",
+			elog(LOG, "%s of worker %d ended, %lld KB used: %s",
 				 SERIAL(state) ? "internal sort" : "unperformed parallel sort",
-				 state->worker, spaceUsed, pg_rusage_show(&state->ru_start));
+				 state->worker, (long long) spaceUsed, pg_rusage_show(&state->ru_start));
 	}
 
 	TRACE_POSTGRESQL_SORT_DONE(state->tapeset != NULL, spaceUsed);

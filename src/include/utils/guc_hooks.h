@@ -7,7 +7,7 @@
  * declare them all here to avoid having to propagate guc.h into
  * a lot of unrelated header files.
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  *
  *	  src/include/utils/guc_hooks.h
  *
@@ -84,6 +84,8 @@ extern bool check_maintenance_io_concurrency(int *newval, void **extra,
 extern void assign_maintenance_io_concurrency(int newval, void *extra);
 extern bool check_max_connections(int *newval, void **extra, GucSource source);
 extern bool check_max_wal_senders(int *newval, void **extra, GucSource source);
+extern bool check_max_slot_wal_keep_size(int *newval, void **extra,
+										 GucSource source);
 extern void assign_max_wal_size(int newval, void *extra);
 extern bool check_max_worker_processes(int *newval, void **extra,
 									   GucSource source);
@@ -159,6 +161,6 @@ extern bool check_wal_consistency_checking(char **newval, void **extra,
 										   GucSource source);
 extern void assign_wal_consistency_checking(const char *newval, void *extra);
 extern bool check_wal_segment_size(int *newval, void **extra, GucSource source);
-extern void assign_xlog_sync_method(int new_sync_method, void *extra);
+extern void assign_wal_sync_method(int new_wal_sync_method, void *extra);
 
 #endif							/* GUC_HOOKS_H */

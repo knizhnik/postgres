@@ -21,7 +21,7 @@
  * that there only needs to be one call to lazy_vacuum, after the initial pass
  * completes.
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -135,7 +135,7 @@ typedef enum
 	VACUUM_ERRCB_PHASE_VACUUM_INDEX,
 	VACUUM_ERRCB_PHASE_VACUUM_HEAP,
 	VACUUM_ERRCB_PHASE_INDEX_CLEANUP,
-	VACUUM_ERRCB_PHASE_TRUNCATE
+	VACUUM_ERRCB_PHASE_TRUNCATE,
 } VacErrPhase;
 
 typedef struct LVRelState
@@ -1047,18 +1047,6 @@ lazy_scan_heap(LVRelState *vacrel)
 				dead_items->num_items = 0;
 
 				/*
-				 * Periodically perform FSM vacuuming to make newly-freed
-				 * space visible on upper FSM pages.  Note we have not yet
-				 * performed FSM processing for blkno.
-				 */
-				if (blkno - next_fsm_block_to_vacuum >= VACUUM_FSM_EVERY_PAGES)
-				{
-					FreeSpaceMapVacuumRange(vacrel->rel, next_fsm_block_to_vacuum,
-											blkno);
-					next_fsm_block_to_vacuum = blkno;
-				}
-
-				/*
 				 * Now perform FSM processing for blkno, and move on to next
 				 * page.
 				 *
@@ -1071,6 +1059,24 @@ lazy_scan_heap(LVRelState *vacrel)
 
 				UnlockReleaseBuffer(buf);
 				RecordPageWithFreeSpace(vacrel->rel, blkno, freespace);
+
+				/*
+				 * Periodically perform FSM vacuuming to make newly-freed
+				 * space visible on upper FSM pages. FreeSpaceMapVacuumRange()
+				 * vacuums the portion of the freespace map covering heap
+				 * pages from start to end - 1. Include the block we just
+				 * vacuumed by passing it blkno + 1. Overflow isn't an issue
+				 * because MaxBlockNumber + 1 is InvalidBlockNumber which
+				 * causes FreeSpaceMapVacuumRange() to vacuum freespace map
+				 * pages covering the remainder of the relation.
+				 */
+				if (blkno - next_fsm_block_to_vacuum >= VACUUM_FSM_EVERY_PAGES)
+				{
+					FreeSpaceMapVacuumRange(vacrel->rel, next_fsm_block_to_vacuum,
+											blkno + 1);
+					next_fsm_block_to_vacuum = blkno + 1;
+				}
+
 				continue;
 			}
 
@@ -2652,7 +2658,7 @@ lazy_check_wraparound_failsafe(LVRelState *vacrel)
 						vacrel->dbname, vacrel->relnamespace, vacrel->relname,
 						vacrel->num_index_scans),
 				 errdetail("The table's relfrozenxid or relminmxid is too far in the past."),
-				 errhint("Consider increasing configuration parameter \"maintenance_work_mem\" or \"autovacuum_work_mem\".\n"
+				 errhint("Consider increasing configuration parameter maintenance_work_mem or autovacuum_work_mem.\n"
 						 "You might also need to consider other ways for VACUUM to keep up with the allocation of transaction IDs.")));
 
 		/* Stop applying cost limits from this point on */

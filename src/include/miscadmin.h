@@ -10,7 +10,7 @@
  *	  Over time, this has also become the preferred place for widely known
  *	  resource-limitation stuff, such as work_mem and check_stack_depth().
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/miscadmin.h
@@ -203,6 +203,8 @@ extern PGDLLIMPORT Oid MyDatabaseId;
 
 extern PGDLLIMPORT Oid MyDatabaseTableSpace;
 
+extern PGDLLIMPORT bool MyDatabaseHasLoginEventTriggers;
+
 /*
  * Date/Time Configuration
  *
@@ -300,10 +302,6 @@ extern void PreventCommandIfReadOnly(const char *cmdname);
 extern void PreventCommandIfParallelMode(const char *cmdname);
 extern void PreventCommandDuringRecovery(const char *cmdname);
 
-/* in utils/misc/guc_tables.c */
-extern PGDLLIMPORT int trace_recovery_messages;
-extern int	trace_recovery(int trace_level);
-
 /*****************************************************************************
  *	  pdir.h --																 *
  *			POSTGRES directory path definitions.                             *
@@ -338,6 +336,7 @@ typedef enum BackendType
 	B_STARTUP,
 	B_WAL_RECEIVER,
 	B_WAL_SENDER,
+	B_WAL_SUMMARIZER,
 	B_WAL_WRITER,
 } BackendType;
 
@@ -407,7 +406,7 @@ typedef enum ProcessingMode
 {
 	BootstrapProcessing,		/* bootstrap creation of template database */
 	InitProcessing,				/* initializing system */
-	NormalProcessing			/* normal processing */
+	NormalProcessing,			/* normal processing */
 } ProcessingMode;
 
 extern PGDLLIMPORT ProcessingMode Mode;
@@ -444,6 +443,7 @@ typedef enum
 	CheckpointerProcess,
 	WalWriterProcess,
 	WalReceiverProcess,
+	WalSummarizerProcess,
 
 	NUM_AUXPROCTYPES			/* Must be last! */
 } AuxProcType;
@@ -456,6 +456,7 @@ extern PGDLLIMPORT AuxProcType MyAuxProcType;
 #define AmCheckpointerProcess()		(MyAuxProcType == CheckpointerProcess)
 #define AmWalWriterProcess()		(MyAuxProcType == WalWriterProcess)
 #define AmWalReceiverProcess()		(MyAuxProcType == WalReceiverProcess)
+#define AmWalSummarizerProcess()	(MyAuxProcType == WalSummarizerProcess)
 
 
 /*****************************************************************************

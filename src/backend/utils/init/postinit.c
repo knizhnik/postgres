@@ -3,7 +3,7 @@
  * postinit.c
  *	  postgres initialization utilities
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -1103,6 +1103,7 @@ InitPostgres(const char *in_dbname, Oid dboid,
 		}
 
 		MyDatabaseTableSpace = datform->dattablespace;
+		MyDatabaseHasLoginEventTriggers = datform->dathasloginevt;
 		/* pass the database name back to the caller */
 		if (out_dbname)
 			strcpy(out_dbname, dbname);

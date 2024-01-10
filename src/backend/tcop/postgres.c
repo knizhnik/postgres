@@ -3,7 +3,7 @@
  * postgres.c
  *	  POSTGRES C Backend Interface
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -36,6 +36,7 @@
 #include "access/xact.h"
 #include "catalog/pg_type.h"
 #include "commands/async.h"
+#include "commands/event_trigger.h"
 #include "commands/prepare.h"
 #include "common/pg_prng.h"
 #include "jit/jit.h"
@@ -1816,23 +1817,19 @@ exec_bind_message(StringInfo input_message)
 
 			if (!isNull)
 			{
-				const char *pvalue = pq_getmsgbytes(input_message, plength);
+				char	   *pvalue;
 
 				/*
-				 * Rather than copying data around, we just set up a phony
+				 * Rather than copying data around, we just initialize a
 				 * StringInfo pointing to the correct portion of the message
-				 * buffer.  We assume we can scribble on the message buffer so
-				 * as to maintain the convention that StringInfos have a
-				 * trailing null.  This is grotty but is a big win when
-				 * dealing with very large parameter strings.
+				 * buffer.  We assume we can scribble on the message buffer to
+				 * add a trailing NUL which is required for the input function
+				 * call.
 				 */
-				pbuf.data = unconstify(char *, pvalue);
-				pbuf.maxlen = plength + 1;
-				pbuf.len = plength;
-				pbuf.cursor = 0;
-
-				csave = pbuf.data[plength];
-				pbuf.data[plength] = '\0';
+				pvalue = unconstify(char *, pq_getmsgbytes(input_message, plength));
+				csave = pvalue[plength];
+				pvalue[plength] = '\0';
+				initReadOnlyStringInfo(&pbuf, pvalue, plength);
 			}
 			else
 			{
@@ -3527,7 +3524,7 @@ check_stack_depth(void)
 		ereport(ERROR,
 				(errcode(ERRCODE_STATEMENT_TOO_COMPLEX),
 				 errmsg("stack depth limit exceeded"),
-				 errhint("Increase the configuration parameter \"max_stack_depth\" (currently %dkB), "
+				 errhint("Increase the configuration parameter max_stack_depth (currently %dkB), "
 						 "after ensuring the platform's stack depth limit is adequate.",
 						 max_stack_depth)));
 	}
@@ -3574,7 +3571,7 @@ check_max_stack_depth(int *newval, void **extra, GucSource source)
 
 	if (stack_rlimit > 0 && newval_bytes > stack_rlimit - STACK_DEPTH_SLOP)
 	{
-		GUC_check_errdetail("\"max_stack_depth\" must not exceed %ldkB.",
+		GUC_check_errdetail("max_stack_depth must not exceed %ldkB.",
 							(stack_rlimit - STACK_DEPTH_SLOP) / 1024L);
 		GUC_check_errhint("Increase the platform's stack depth limit via \"ulimit -s\" or local equivalent.");
 		return false;
@@ -3635,9 +3632,9 @@ check_log_stats(bool *newval, void **extra, GucSource source)
 	if (*newval &&
 		(log_parser_stats || log_planner_stats || log_executor_stats))
 	{
-		GUC_check_errdetail("Cannot enable \"log_statement_stats\" when "
-							"\"log_parser_stats\", \"log_planner_stats\", "
-							"or \"log_executor_stats\" is true.");
+		GUC_check_errdetail("Cannot enable log_statement_stats when "
+							"log_parser_stats, log_planner_stats, "
+							"or log_executor_stats is true.");
 		return false;
 	}
 	return true;
@@ -4289,6 +4286,9 @@ PostgresMain(const char *dbname, const char *username)
 	initStringInfo(&row_description_buf);
 	MemoryContextSwitchTo(TopMemoryContext);
 
+	/* Fire any defined login event triggers, if appropriate */
+	EventTriggerOnLogin();
+
 	/*
 	 * POSTGRES main processing loop begins here
 	 *
@@ -4457,7 +4457,7 @@ PostgresMain(const char *dbname, const char *username)
 		 * query input buffer in the cleared MessageContext.
 		 */
 		MemoryContextSwitchTo(MessageContext);
-		MemoryContextResetAndDeleteChildren(MessageContext);
+		MemoryContextReset(MessageContext);
 
 		initStringInfo(&input_message);
 

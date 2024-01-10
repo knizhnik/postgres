@@ -32,7 +32,7 @@
  * input group.
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -631,7 +631,7 @@ ExecReScanSetOp(SetOpState *node)
 
 	/* Release any hashtable storage */
 	if (node->tableContext)
-		MemoryContextResetAndDeleteChildren(node->tableContext);
+		MemoryContextReset(node->tableContext);
 
 	/* And rebuild empty hashtable if needed */
 	if (((SetOp *) node->ps.plan)->strategy == SETOP_HASHED)

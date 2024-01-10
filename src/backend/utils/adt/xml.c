@@ -4,7 +4,7 @@
  *	  XML data type support.
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/backend/utils/adt/xml.c
@@ -47,6 +47,7 @@
 
 #ifdef USE_LIBXML
 #include <libxml/chvalid.h>
+#include <libxml/entities.h>
 #include <libxml/parser.h>
 #include <libxml/parserInternals.h>
 #include <libxml/tree.h>
@@ -512,6 +513,27 @@ xmlcomment(PG_FUNCTION_ARGS)
 #endif
 }
 
+
+Datum
+xmltext(PG_FUNCTION_ARGS)
+{
+#ifdef USE_LIBXML
+	text	   *arg = PG_GETARG_TEXT_PP(0);
+	text	   *result;
+	xmlChar    *xmlbuf = NULL;
+
+	xmlbuf = xmlEncodeSpecialChars(NULL, xml_text2xmlChar(arg));
+
+	Assert(xmlbuf);
+
+	result = cstring_to_text_with_len((const char *) xmlbuf, xmlStrlen(xmlbuf));
+	xmlFree(xmlbuf);
+	PG_RETURN_XML_P(result);
+#else
+	NO_XML_SUPPORT();
+	return 0;
+#endif							/* not USE_LIBXML */
+}
 
 
 /*

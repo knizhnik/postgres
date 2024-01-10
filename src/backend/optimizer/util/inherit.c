@@ -3,7 +3,7 @@
  * inherit.c
  *	  Routines to process child relations in inheritance trees
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -457,7 +457,8 @@ expand_single_inheritance_child(PlannerInfo *root, RangeTblEntry *parentrte,
 								Index *childRTindex_p)
 {
 	Query	   *parse = root->parse;
-	Oid			parentOID = RelationGetRelid(parentrel);
+	Oid			parentOID PG_USED_FOR_ASSERTS_ONLY =
+		RelationGetRelid(parentrel);
 	Oid			childOID = RelationGetRelid(childrel);
 	RangeTblEntry *childrte;
 	Index		childRTindex;
@@ -494,13 +495,8 @@ expand_single_inheritance_child(PlannerInfo *root, RangeTblEntry *parentrte,
 		childrte->inh = false;
 	childrte->securityQuals = NIL;
 
-	/*
-	 * No permission checking for the child RTE unless it's the parent
-	 * relation in its child role, which only applies to traditional
-	 * inheritance.
-	 */
-	if (childOID != parentOID)
-		childrte->perminfoindex = 0;
+	/* No permission checking for child RTEs. */
+	childrte->perminfoindex = 0;
 
 	/* Link not-yet-fully-filled child RTE into data structures */
 	parse->rtable = lappend(parse->rtable, childrte);

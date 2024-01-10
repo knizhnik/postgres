@@ -4,7 +4,7 @@
  * src/backend/utils/adt/formatting.c
  *
  *
- *	 Portions Copyright (c) 1999-2023, PostgreSQL Global Development Group
+ *	 Portions Copyright (c) 1999-2024, PostgreSQL Global Development Group
  *
  *
  *	 TO_CHAR(); TO_TIMESTAMP(); TO_DATE(); TO_NUMBER();
@@ -137,7 +137,7 @@ typedef enum
 {
 	FROM_CHAR_DATE_NONE = 0,	/* Value does not affect date mode. */
 	FROM_CHAR_DATE_GREGORIAN,	/* Gregorian (day, month, year) style date */
-	FROM_CHAR_DATE_ISOWEEK		/* ISO 8601 week date */
+	FROM_CHAR_DATE_ISOWEEK,		/* ISO 8601 week date */
 } FromCharDateMode;
 
 typedef struct
@@ -4127,7 +4127,7 @@ interval_to_char(PG_FUNCTION_ARGS)
 	struct pg_itm tt,
 			   *itm = &tt;
 
-	if (VARSIZE_ANY_EXHDR(fmt) <= 0)
+	if (VARSIZE_ANY_EXHDR(fmt) <= 0 || INTERVAL_NOT_FINITE(it))
 		PG_RETURN_NULL();
 
 	ZERO_tmtc(&tmtc);

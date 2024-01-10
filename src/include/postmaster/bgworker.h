@@ -31,7 +31,7 @@
  * different) code.
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -78,7 +78,7 @@ typedef enum
 {
 	BgWorkerStart_PostmasterStart,
 	BgWorkerStart_ConsistentState,
-	BgWorkerStart_RecoveryFinished
+	BgWorkerStart_RecoveryFinished,
 } BgWorkerStartTime;
 
 #define BGW_DEFAULT_RESTART_INTERVAL	60
@@ -105,7 +105,7 @@ typedef enum BgwHandleStatus
 	BGWH_STARTED,				/* worker is running */
 	BGWH_NOT_YET_STARTED,		/* worker hasn't been started yet */
 	BGWH_STOPPED,				/* worker has exited */
-	BGWH_POSTMASTER_DIED		/* postmaster died; worker status unclear */
+	BGWH_POSTMASTER_DIED,		/* postmaster died; worker status unclear */
 } BgwHandleStatus;
 
 struct BackgroundWorkerHandle;

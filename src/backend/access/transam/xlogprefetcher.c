@@ -3,7 +3,7 @@
  * xlogprefetcher.c
  *		Prefetching support for recovery.
  *
- * Portions Copyright (c) 2022-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2022-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -88,7 +88,7 @@ typedef enum
 {
 	LRQ_NEXT_NO_IO,
 	LRQ_NEXT_IO,
-	LRQ_NEXT_AGAIN
+	LRQ_NEXT_AGAIN,
 } LsnReadQueueNextStatus;
 
 /*

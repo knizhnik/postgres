@@ -4,7 +4,7 @@
  *	  definition of the "constraint" system catalog (pg_constraint)
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/catalog/pg_constraint.h
@@ -202,7 +202,7 @@ typedef enum ConstraintCategory
 {
 	CONSTRAINT_RELATION,
 	CONSTRAINT_DOMAIN,
-	CONSTRAINT_ASSERTION		/* for future expansion */
+	CONSTRAINT_ASSERTION,		/* for future expansion */
 } ConstraintCategory;
 
 

@@ -4,7 +4,7 @@
  *	  POSTGRES buffer manager definitions.
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/storage/bufmgr.h
@@ -35,7 +35,7 @@ typedef enum BufferAccessStrategyType
 	BAS_BULKREAD,				/* Large read-only scan (hint bit updates are
 								 * ok) */
 	BAS_BULKWRITE,				/* Large multi-block write (e.g. COPY IN) */
-	BAS_VACUUM					/* VACUUM */
+	BAS_VACUUM,					/* VACUUM */
 } BufferAccessStrategyType;
 
 /* Possible modes for ReadBufferExtended() */
@@ -47,7 +47,7 @@ typedef enum
 	RBM_ZERO_AND_CLEANUP_LOCK,	/* Like RBM_ZERO_AND_LOCK, but locks the page
 								 * in "cleanup" mode */
 	RBM_ZERO_ON_ERROR,			/* Read, but return an all-zeros page on error */
-	RBM_NORMAL_NO_LOG			/* Don't log page as invalid during WAL
+	RBM_NORMAL_NO_LOG,			/* Don't log page as invalid during WAL
 								 * replay; otherwise same as RBM_NORMAL */
 } ReadBufferMode;
 
@@ -179,6 +179,8 @@ extern Buffer ReadBufferWithoutRelcache(RelFileLocator rlocator,
 										bool permanent);
 extern void ReleaseBuffer(Buffer buffer);
 extern void UnlockReleaseBuffer(Buffer buffer);
+extern bool BufferIsExclusiveLocked(Buffer buffer);
+extern bool BufferIsDirty(Buffer buffer);
 extern void MarkBufferDirty(Buffer buffer);
 extern void IncrBufferRefCount(Buffer buffer);
 extern void CheckBufferIsPinnedOnce(Buffer buffer);
@@ -205,7 +207,7 @@ extern Buffer ExtendBufferedRelTo(BufferManagerRelation bmr,
 
 extern void InitBufferPoolAccess(void);
 extern void AtEOXact_Buffers(bool isCommit);
-extern void PrintBufferLeakWarning(Buffer buffer);
+extern char *DebugPrintBufferRefcount(Buffer buffer);
 extern void CheckPointBuffers(int flags);
 extern BlockNumber BufferGetBlockNumber(Buffer buffer);
 extern BlockNumber RelationGetNumberOfBlocksInFork(Relation relation,
@@ -245,8 +247,6 @@ extern void LockBufferForCleanup(Buffer buffer);
 extern bool ConditionalLockBufferForCleanup(Buffer buffer);
 extern bool IsBufferCleanupOK(Buffer buffer);
 extern bool HoldingBufferPinThatDelaysRecovery(void);
-
-extern void AbortBufferIO(Buffer buffer);
 
 extern bool BgBufferSync(struct WritebackContext *wb_context);
 

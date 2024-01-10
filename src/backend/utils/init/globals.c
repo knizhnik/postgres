@@ -3,7 +3,7 @@
  * globals.c
  *	  global variable declarations
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -89,6 +89,8 @@ BackendId	ParallelLeaderBackendId = InvalidBackendId;
 Oid			MyDatabaseId = InvalidOid;
 
 Oid			MyDatabaseTableSpace = InvalidOid;
+
+bool		MyDatabaseHasLoginEventTriggers = false;
 
 /*
  * DatabasePath is the path (relative to DataDir) of my database's

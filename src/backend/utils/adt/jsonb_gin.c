@@ -3,7 +3,7 @@
  * jsonb_gin.c
  *	 GIN support functions for jsonb
  *
- * Copyright (c) 2014-2023, PostgreSQL Global Development Group
+ * Copyright (c) 2014-2024, PostgreSQL Global Development Group
  *
  * We provide two opclasses for jsonb indexing: jsonb_ops and jsonb_path_ops.
  * For their description see json.sgml and comments in jsonb.h.
@@ -88,7 +88,7 @@ typedef enum JsonPathGinNodeType
 {
 	JSP_GIN_OR,
 	JSP_GIN_AND,
-	JSP_GIN_ENTRY
+	JSP_GIN_ENTRY,
 } JsonPathGinNodeType;
 
 typedef struct JsonPathGinNode JsonPathGinNode;

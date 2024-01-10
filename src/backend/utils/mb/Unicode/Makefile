@@ -2,7 +2,7 @@
 #
 # Makefile for src/backend/utils/mb/Unicode
 #
-# Copyright (c) 2001-2023, PostgreSQL Global Development Group
+# Copyright (c) 2001-2024, PostgreSQL Global Development Group
 #
 # src/backend/utils/mb/Unicode/Makefile
 #
@@ -66,8 +66,6 @@ all: $(MAPS)
 
 distclean: clean
 	rm -f $(TEXTS)
-
-maintainer-clean: distclean
 	rm -f $(MAPS)
 
 

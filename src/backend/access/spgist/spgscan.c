@@ -4,7 +4,7 @@
  *	  routines for scanning SP-GiST indexes
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -756,7 +756,7 @@ enum SpGistSpecialOffsetNumbers
 {
 	SpGistBreakOffsetNumber = InvalidOffsetNumber,
 	SpGistRedirectOffsetNumber = MaxOffsetNumber + 1,
-	SpGistErrorOffsetNumber = MaxOffsetNumber + 2
+	SpGistErrorOffsetNumber = MaxOffsetNumber + 2,
 };
 
 static OffsetNumber

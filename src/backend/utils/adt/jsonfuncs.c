@@ -3,7 +3,7 @@
  * jsonfuncs.c
  *		Functions to process JSON data types.
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -201,7 +201,7 @@ typedef enum TypeCat
 	TYPECAT_ARRAY = 'a',
 	TYPECAT_COMPOSITE = 'c',
 	TYPECAT_COMPOSITE_DOMAIN = 'C',
-	TYPECAT_DOMAIN = 'd'
+	TYPECAT_DOMAIN = 'd',
 } TypeCat;
 
 /* these two are stolen from hstore / record_out, used in populate_record* */

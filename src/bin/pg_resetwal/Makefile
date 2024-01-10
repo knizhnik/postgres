@@ -2,7 +2,7 @@
 #
 # Makefile for src/bin/pg_resetwal
 #
-# Copyright (c) 1998-2023, PostgreSQL Global Development Group
+# Copyright (c) 1998-2024, PostgreSQL Global Development Group
 #
 # src/bin/pg_resetwal/Makefile
 #
@@ -35,7 +35,7 @@ installdirs:
 uninstall:
 	rm -f '$(DESTDIR)$(bindir)/pg_resetwal$(X)'
 
-clean distclean maintainer-clean:
+clean distclean:
 	rm -f pg_resetwal$(X) $(OBJS)
 	rm -rf tmp_check
 

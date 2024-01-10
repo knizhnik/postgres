@@ -3,7 +3,7 @@
  * Assorted utility functions to work on files.
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/common/file_utils.h
@@ -21,13 +21,13 @@ typedef enum PGFileType
 	PGFILETYPE_UNKNOWN,
 	PGFILETYPE_REG,
 	PGFILETYPE_DIR,
-	PGFILETYPE_LNK
+	PGFILETYPE_LNK,
 } PGFileType;
 
 typedef enum DataDirSyncMethod
 {
 	DATA_DIR_SYNC_METHOD_FSYNC,
-	DATA_DIR_SYNC_METHOD_SYNCFS
+	DATA_DIR_SYNC_METHOD_SYNCFS,
 } DataDirSyncMethod;
 
 struct iovec;					/* avoid including port/pg_iovec.h here */
@@ -45,6 +45,11 @@ extern PGFileType get_dirent_type(const char *path,
 								  const struct dirent *de,
 								  bool look_through_symlinks,
 								  int elevel);
+
+extern int	compute_remaining_iovec(struct iovec *destination,
+									const struct iovec *source,
+									int iovcnt,
+									size_t transferred);
 
 extern ssize_t pg_pwritev_with_retry(int fd,
 									 const struct iovec *iov,

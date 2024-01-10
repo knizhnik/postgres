@@ -3,7 +3,7 @@
  * bloom.h
  *	  Header for bloom index.
  *
- * Copyright (c) 2016-2023, PostgreSQL Global Development Group
+ * Copyright (c) 2016-2024, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  contrib/bloom/bloom.h
@@ -127,7 +127,7 @@ typedef struct BloomMetaPageData
 	FreeBlockNumberArray notFullPage;
 } BloomMetaPageData;
 
-/* Magic number to distinguish bloom pages among anothers */
+/* Magic number to distinguish bloom pages from others */
 #define BLOOM_MAGICK_NUMBER (0xDBAC0DED)
 
 /* Number of blocks numbers fit in BloomMetaPageData */
@@ -173,6 +173,13 @@ typedef struct BloomScanOpaqueData
 } BloomScanOpaqueData;
 
 typedef BloomScanOpaqueData *BloomScanOpaque;
+
+typedef struct
+{
+	uint64 matches;
+} BloomUsage;
+
+extern BloomUsage bloomUsage;
 
 /* blutils.c */
 extern void initBloomState(BloomState *state, Relation index);

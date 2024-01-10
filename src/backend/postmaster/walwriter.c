@@ -31,7 +31,7 @@
  * should be killed by SIGQUIT and then a recovery cycle started.
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  *
  *
  * IDENTIFICATION
@@ -178,7 +178,7 @@ WalWriterMain(void)
 		FlushErrorState();
 
 		/* Flush any leaked data in the top-level context */
-		MemoryContextResetAndDeleteChildren(walwriter_context);
+		MemoryContextReset(walwriter_context);
 
 		/* Now we can allow interrupts again */
 		RESUME_INTERRUPTS();

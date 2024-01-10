@@ -1,9 +1,9 @@
-# Copyright (c) 2023, PostgreSQL Global Development Group
+# Copyright (c) 2023-2024, PostgreSQL Global Development Group
 
 # Test worker_spi module.
 
 use strict;
-use warnings;
+use warnings FATAL => 'all';
 use PostgreSQL::Test::Cluster;
 use PostgreSQL::Test::Utils;
 use Test::More;
@@ -63,11 +63,14 @@ $node->safe_psql('postgres', q(CREATE ROLE myrole SUPERUSER LOGIN;));
 $node->safe_psql('mydb', 'CREATE EXTENSION worker_spi;');
 
 # Now load the module as a shared library.
+# Update max_worker_processes to make room for enough bgworkers, including
+# parallel workers these may spawn.
 $node->append_conf(
 	'postgresql.conf', q{
 shared_preload_libraries = 'worker_spi'
 worker_spi.database = 'mydb'
 worker_spi.total_workers = 3
+max_worker_processes = 32
 });
 $node->restart;
 

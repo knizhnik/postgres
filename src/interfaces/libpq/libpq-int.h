@@ -9,7 +9,7 @@
  *	  more likely to break across PostgreSQL releases than code that uses
  *	  only the official API.
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/interfaces/libpq/libpq-int.h
@@ -583,8 +583,8 @@ struct pg_conn
 	int			gss_SendLength; /* End of data available in gss_SendBuffer */
 	int			gss_SendNext;	/* Next index to send a byte from
 								 * gss_SendBuffer */
-	int			gss_SendConsumed;	/* Number of *unencrypted* bytes consumed
-									 * for current contents of gss_SendBuffer */
+	int			gss_SendConsumed;	/* Number of source bytes encrypted but
+									 * not yet reported as sent */
 	char	   *gss_RecvBuffer; /* Received, encrypted data */
 	int			gss_RecvLength; /* End of data available in gss_RecvBuffer */
 	char	   *gss_ResultBuffer;	/* Decryption of data in gss_RecvBuffer */
@@ -698,7 +698,8 @@ extern void pqSaveMessageField(PGresult *res, char code,
 extern void pqSaveParameterStatus(PGconn *conn, const char *name,
 								  const char *value);
 extern int	pqRowProcessor(PGconn *conn, const char **errmsgp);
-extern void pqCommandQueueAdvance(PGconn *conn);
+extern void pqCommandQueueAdvance(PGconn *conn, bool isReadyForQuery,
+								  bool gotSync);
 extern int	PQsendQueryContinue(PGconn *conn, const char *query);
 
 /* === in fe-protocol3.c === */

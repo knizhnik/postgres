@@ -4,7 +4,7 @@
  *	  Functions to convert stored expressions/querytrees back to
  *	  source text
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -10345,6 +10345,16 @@ get_func_sql_syntax(FuncExpr *expr, deparse_context *context)
 			get_rule_expr_paren((Node *) linitial(expr->args), context, false,
 								(Node *) expr);
 			appendStringInfoChar(buf, ')');
+			return true;
+
+		case F_TIMEZONE_TIMESTAMP:
+		case F_TIMEZONE_TIMESTAMPTZ:
+		case F_TIMEZONE_TIMETZ:
+			/* AT LOCAL */
+			appendStringInfoChar(buf, '(');
+			get_rule_expr_paren((Node *) linitial(expr->args), context, false,
+								(Node *) expr);
+			appendStringInfoString(buf, " AT LOCAL)");
 			return true;
 
 		case F_OVERLAPS_TIMESTAMPTZ_INTERVAL_TIMESTAMPTZ_INTERVAL:

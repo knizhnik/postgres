@@ -1,5 +1,8 @@
+
+# Copyright (c) 2024, PostgreSQL Global Development Group
+
 use strict;
-use warnings;
+use warnings FATAL => 'all';
 
 our $config;
 

@@ -3,7 +3,7 @@
  * pg_subscription.c
  *		replication subscriptions
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -107,6 +107,9 @@ GetSubscription(Oid subid, bool missing_ok)
 								   tup,
 								   Anum_pg_subscription_suborigin);
 	sub->origin = TextDatumGetCString(datum);
+
+	/* Is the subscription owner a superuser? */
+	sub->ownersuperuser = superuser_arg(sub->owner);
 
 	ReleaseSysCache(tup);
 
@@ -225,10 +228,14 @@ textarray_to_stringlist(ArrayType *textarray)
 
 /*
  * Add new state record for a subscription table.
+ *
+ * If retain_lock is true, then don't release the locks taken in this function.
+ * We normally release the locks at the end of transaction but in binary-upgrade
+ * mode, we expect to release those immediately.
  */
 void
 AddSubscriptionRelState(Oid subid, Oid relid, char state,
-						XLogRecPtr sublsn)
+						XLogRecPtr sublsn, bool retain_lock)
 {
 	Relation	rel;
 	HeapTuple	tup;
@@ -266,7 +273,15 @@ AddSubscriptionRelState(Oid subid, Oid relid, char state,
 	heap_freetuple(tup);
 
 	/* Cleanup. */
-	table_close(rel, NoLock);
+	if (retain_lock)
+	{
+		table_close(rel, NoLock);
+	}
+	else
+	{
+		table_close(rel, RowExclusiveLock);
+		UnlockSharedObject(SubscriptionRelationId, subid, 0, AccessShareLock);
+	}
 }
 
 /*

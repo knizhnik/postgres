@@ -3,7 +3,7 @@
  * slotfuncs.c
  *	   Support functions for replication slots
  *
- * Copyright (c) 2012-2023, PostgreSQL Global Development Group
+ * Copyright (c) 2012-2024, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/replication/slotfuncs.c
@@ -406,10 +406,24 @@ pg_get_replication_slots(PG_FUNCTION_ARGS)
 			nulls[i++] = true;
 		else
 		{
-			if (slot_contents.data.invalidated != RS_INVAL_NONE)
-				values[i++] = BoolGetDatum(true);
-			else
-				values[i++] = BoolGetDatum(false);
+			switch (slot_contents.data.invalidated)
+			{
+				case RS_INVAL_NONE:
+					nulls[i++] = true;
+					break;
+
+				case RS_INVAL_WAL_REMOVED:
+					values[i++] = CStringGetTextDatum("wal_removed");
+					break;
+
+				case RS_INVAL_HORIZON:
+					values[i++] = CStringGetTextDatum("rows_removed");
+					break;
+
+				case RS_INVAL_WAL_LEVEL:
+					values[i++] = CStringGetTextDatum("wal_level_insufficient");
+					break;
+			}
 		}
 
 		Assert(i == PG_GET_REPLICATION_SLOTS_COLS);
@@ -500,7 +514,7 @@ pg_logical_replication_slot_advance(XLogRecPtr moveto)
 		/* invalidate non-timetravel entries */
 		InvalidateSystemCaches();
 
-		/* Decode at least one record, until we run out of records */
+		/* Decode records until we reach the requested target */
 		while (ctx->reader->EndRecPtr < moveto)
 		{
 			char	   *errm = NULL;
@@ -522,10 +536,6 @@ pg_logical_replication_slot_advance(XLogRecPtr moveto)
 			 */
 			if (record)
 				LogicalDecodingProcessRecord(ctx, ctx->reader);
-
-			/* Stop once the requested target has been reached */
-			if (moveto <= ctx->reader->EndRecPtr)
-				break;
 
 			CHECK_FOR_INTERRUPTS();
 		}

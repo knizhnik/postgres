@@ -1,4 +1,4 @@
-# Copyright (c) 2022-2023, PostgreSQL Global Development Group
+# Copyright (c) 2022-2024, PostgreSQL Global Development Group
 
 # Entry point for building PostgreSQL with meson
 #
@@ -72,7 +72,7 @@ configure. Alternatively use a separate check out for meson based builds.
 @0@
 ****'''
 if fs.exists(meson.current_source_dir() / 'src' / 'include' / 'pg_config.h')
-  errmsg_cleanup = 'To clean up, run make maintainer-clean in the source tree.'
+  errmsg_cleanup = 'To clean up, run make distclean in the source tree.'
   error(errmsg_nonclean_base.format(errmsg_cleanup))
 endif
 
@@ -331,10 +331,10 @@ perl = find_program(get_option('PERL'), required: true, native: true)
 python = find_program(get_option('PYTHON'), required: true, native: true)
 flex = find_program(get_option('FLEX'), native: true, version: '>= 2.5.35')
 bison = find_program(get_option('BISON'), native: true, version: '>= 2.3')
-sed = find_program(get_option('SED'), 'sed', native: true)
+sed = find_program(get_option('SED'), 'sed', native: true, required: false)
 prove = find_program(get_option('PROVE'), native: true, required: false)
-tar = find_program(get_option('TAR'), native: true)
-gzip = find_program(get_option('GZIP'), native: true)
+tar = find_program(get_option('TAR'), native: true, required: false)
+gzip = find_program(get_option('GZIP'), native: true, required: false)
 program_lz4 = find_program(get_option('LZ4'), native: true, required: false)
 openssl = find_program(get_option('OPENSSL'), native: true, required: false)
 program_zstd = find_program(get_option('ZSTD'), native: true, required: false)
@@ -511,7 +511,10 @@ endif
 dir_man = get_option('mandir')
 
 # FIXME: These used to be separately configurable - worth adding?
-dir_doc = get_option('datadir') / 'doc' / 'postgresql'
+dir_doc = get_option('datadir') / 'doc'
+if not (dir_prefix_contains_pg or dir_doc.contains('pgsql') or dir_doc.contains('postgres'))
+  dir_doc = dir_doc / pkg
+endif
 dir_doc_html = dir_doc / 'html'
 
 dir_locale = get_option('localedir')
@@ -523,6 +526,7 @@ dir_include_internal = dir_include_pkg / 'internal'
 dir_include_server = dir_include_pkg / 'server'
 dir_include_extension = dir_include_server / 'extension'
 dir_data_extension = dir_data / 'extension'
+dir_doc_extension = dir_doc / 'extension'
 
 
 
@@ -1056,15 +1060,17 @@ endif
 ###############################################################
 
 pyopt = get_option('plpython')
+python3_dep = not_found_dep
 if not pyopt.disabled()
   pm = import('python')
-  python3_inst = pm.find_installation(required: pyopt)
-  python3_dep = python3_inst.dependency(embed: true, required: pyopt)
-  if not cc.check_header('Python.h', dependencies: python3_dep, required: pyopt)
-    python3_dep = not_found_dep
+  python3_inst = pm.find_installation(python.path(), required: pyopt)
+  if python3_inst.found()
+    python3_dep = python3_inst.dependency(embed: true, required: pyopt)
+    # Remove this check after we depend on Meson >= 1.1.0
+    if not cc.check_header('Python.h', dependencies: python3_dep, required: pyopt)
+      python3_dep = not_found_dep
+    endif
   endif
-else
-  python3_dep = not_found_dep
 endif
 
 
@@ -1133,7 +1139,7 @@ if not get_option('readline').disabled()
 
     if not at_least_one_header_found
       error('''readline header not found
-If you have @0@ already installed, see meson-log/meson-log.txt for details on the
+If you have @0@ already installed, see meson-logs/meson-log.txt for details on the
 failure. It is possible the compiler isn't looking in the proper directory.
 Use -Dreadline=disabled to disable readline support.'''.format(readline_dep))
     endif
@@ -1279,7 +1285,6 @@ if sslopt in ['auto', 'openssl']
       # doesn't have these OpenSSL 1.1.0 functions. So check for individual
       # functions.
       ['OPENSSL_init_ssl'],
-      ['BIO_get_data'],
       ['BIO_meth_new'],
       ['ASN1_STRING_get0_data'],
       ['HMAC_CTX_new'],
@@ -1871,7 +1876,6 @@ foreach w : negative_warning_flags
 endforeach
 
 
-# From Project.pm
 if cc.get_id() == 'msvc'
   cflags_warn += [
     '/wd4018', # signed/unsigned mismatch
@@ -2919,8 +2923,12 @@ potentially_conflicting_files = []
 foreach t : potentially_conflicting_files_t
   potentially_conflicting_files += t.full_path()
 endforeach
-foreach t : configure_files
-  t = '@0@'.format(t)
+foreach t1 : configure_files
+  if meson.version().version_compare('>=0.59')
+    t = fs.parent(t1) / fs.name(t1)
+  else
+    t = '@0@'.format(t1)
+  endif
   potentially_conflicting_files += meson.current_build_dir() / t
 endforeach
 foreach sub, fnames : generated_sources_ac
@@ -3107,7 +3115,8 @@ sys.exit(sp.returncode)
 ''',
        test_initdb_template,
        temp_install_bindir / 'initdb',
-       '-A', 'trust', '-N', '--no-instructions', '--no-locale'
+       '--auth', 'trust', '--no-sync', '--no-instructions', '--lc-messages=C',
+       '--no-clean'
      ],
      priority: setup_tests_priority - 1,
      timeout: 300,
@@ -3246,8 +3255,9 @@ foreach test_dir : tests
 
       testport += 1
     elif kind == 'tap'
+      testwrap_tap = testwrap_base
       if not tap_tests_enabled
-        continue
+        testwrap_tap += ['--skip', 'TAP tests not enabled']
       endif
 
       test_command = [
@@ -3287,7 +3297,7 @@ foreach test_dir : tests
         test(test_dir['name'] / onetap_p,
           python,
           kwargs: test_kwargs,
-          args: testwrap_base + [
+          args: testwrap_tap + [
             '--testgroup', test_dir['name'],
             '--testname', onetap_p,
             '--', test_command,
@@ -3324,7 +3334,16 @@ alias_target('bin', bin_targets + [libpq_st])
 alias_target('pl', pl_targets)
 alias_target('contrib', contrib_targets)
 alias_target('testprep', testprep_targets)
+
+alias_target('world', all_built, docs)
 alias_target('install-world', install_quiet, installdocs)
+
+run_target('help',
+  command: [
+    perl, '-ne', 'next if /^#/; print',
+    files('doc/src/sgml/targets-meson.txt'),
+  ]
+)
 
 
 

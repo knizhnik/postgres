@@ -10,7 +10,7 @@
  * guarantee that there can only be one matching row for a key combination.
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/utils/catcache.h
@@ -224,8 +224,5 @@ extern void PrepareToInvalidateCacheTuple(Relation relation,
 										  HeapTuple tuple,
 										  HeapTuple newtuple,
 										  void (*function) (int, uint32, Oid));
-
-extern void PrintCatCacheLeakWarning(HeapTuple tuple);
-extern void PrintCatCacheListLeakWarning(CatCList *list);
 
 #endif							/* CATCACHE_H */

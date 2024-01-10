@@ -4,7 +4,7 @@
  *	  definitions for run-time statistics collection
  *
  *
- * Copyright (c) 2001-2023, PostgreSQL Global Development Group
+ * Copyright (c) 2001-2024, PostgreSQL Global Development Group
  *
  * src/include/executor/instrument.h
  *
@@ -14,7 +14,7 @@
 #define INSTRUMENT_H
 
 #include "portability/instr_time.h"
-
+#include "nodes/pg_list.h"
 
 /*
  * BufferUsage and WalUsage counters keep being incremented infinitely,
@@ -33,8 +33,10 @@ typedef struct BufferUsage
 	int64		local_blks_written; /* # of local disk blocks written */
 	int64		temp_blks_read; /* # of temp blocks read */
 	int64		temp_blks_written;	/* # of temp blocks written */
-	instr_time	blk_read_time;	/* time spent reading blocks */
-	instr_time	blk_write_time; /* time spent writing blocks */
+	instr_time	shared_blk_read_time;	/* time spent reading shared blocks */
+	instr_time	shared_blk_write_time;	/* time spent writing shared blocks */
+	instr_time	local_blk_read_time;	/* time spent reading local blocks */
+	instr_time	local_blk_write_time;	/* time spent writing local blocks */
 	instr_time	temp_blk_read_time; /* time spent reading temp blocks */
 	instr_time	temp_blk_write_time;	/* time spent writing temp blocks */
 } BufferUsage;
@@ -63,6 +65,36 @@ typedef enum InstrumentOption
 	INSTRUMENT_ALL = PG_INT32_MAX
 } InstrumentOption;
 
+/*
+ * Maximal total size of all custom intrumentations
+ */
+#define MAX_CUSTOM_INSTR_SIZE 128
+
+typedef struct {
+	char data[MAX_CUSTOM_INSTR_SIZE];
+} CustomInstrumentationData;
+
+typedef void CustomResourceUsage;
+typedef struct ExplainState ExplainState;
+typedef void (*cust_instr_add_t)(CustomResourceUsage* dst, CustomResourceUsage const* add);
+typedef void (*cust_instr_accum_t)(CustomResourceUsage* acc, CustomResourceUsage const* end, CustomResourceUsage const* start);
+typedef void (*cust_instr_show_t)(ExplainState* es, CustomResourceUsage const* usage, bool planning);
+
+typedef struct
+{
+	char const*          name; /* instrumentation name (as will be recongnized in EXPLAIN options */
+	Size                 size;
+	CustomResourceUsage* usage;
+	cust_instr_add_t     add;
+	cust_instr_accum_t   accum;
+	cust_instr_show_t    show;
+	bool                 selected; /* selected in EXPLAIN options */
+} CustomInstrumentation;
+
+extern PGDLLIMPORT List* pgCustInstr; /* description of custom instrumentations */
+extern Size              pgCustUsageSize;
+
+
 typedef struct Instrumentation
 {
 	/* Parameters set at node creation: */
@@ -88,6 +120,8 @@ typedef struct Instrumentation
 	double		nfiltered2;		/* # of tuples removed by "other" quals */
 	BufferUsage bufusage;		/* total buffer usage */
 	WalUsage	walusage;		/* total WAL usage */
+	CustomInstrumentationData cust_usage_start; /* state of custom usage at start */
+	CustomInstrumentationData cust_usage; /* total custom  usage */
 } Instrumentation;
 
 typedef struct WorkerInstrumentation
@@ -99,6 +133,11 @@ typedef struct WorkerInstrumentation
 extern PGDLLIMPORT BufferUsage pgBufferUsage;
 extern PGDLLIMPORT WalUsage pgWalUsage;
 
+
+extern void RegisterCustomInsrumentation(CustomInstrumentation* inst);
+extern void GetCustomInstrumentationState(char* dst);
+extern void AccumulateCustomInstrumentationState(char* dst, char const* before);
+
 extern Instrumentation *InstrAlloc(int n, int instrument_options,
 								   bool async_mode);
 extern void InstrInit(Instrumentation *instr, int instrument_options);
@@ -108,8 +147,8 @@ extern void InstrUpdateTupleCount(Instrumentation *instr, double nTuples);
 extern void InstrEndLoop(Instrumentation *instr);
 extern void InstrAggNode(Instrumentation *dst, Instrumentation *add);
 extern void InstrStartParallelQuery(void);
-extern void InstrEndParallelQuery(BufferUsage *bufusage, WalUsage *walusage);
-extern void InstrAccumParallelQuery(BufferUsage *bufusage, WalUsage *walusage);
+extern void InstrEndParallelQuery(BufferUsage *bufusage, WalUsage *walusage, char* custusage);
+extern void InstrAccumParallelQuery(BufferUsage *bufusage, WalUsage *walusage, char* custusage);
 extern void BufferUsageAccumDiff(BufferUsage *dst,
 								 const BufferUsage *add, const BufferUsage *sub);
 extern void WalUsageAccumDiff(WalUsage *dst, const WalUsage *add,

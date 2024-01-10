@@ -5,7 +5,7 @@
  *	  functions for internal use.
  *
  *
- * Portions Copyright (c) 2022-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 2022-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/utils/memutils_internal.h
@@ -111,7 +111,7 @@ typedef enum MemoryContextMethodID
 	MCTX_GENERATION_ID,
 	MCTX_SLAB_ID,
 	MCTX_ALIGNED_REDIRECT_ID,
-	MCTX_UNUSED4_ID				/* 111 occurs in wipe_mem'd memory */
+	MCTX_UNUSED4_ID,			/* 111 occurs in wipe_mem'd memory */
 } MemoryContextMethodID;
 
 /*

@@ -5,7 +5,7 @@
  * Originally written by Tatsuo Ishii and enhanced by many contributors.
  *
  * src/bin/pgbench/pgbench.c
- * Copyright (c) 2000-2023, PostgreSQL Global Development Group
+ * Copyright (c) 2000-2024, PostgreSQL Global Development Group
  * ALL RIGHTS RESERVED;
  *
  * Permission to use, copy, modify, and distribute this software and its
@@ -227,7 +227,7 @@ typedef enum
 {
 	PART_NONE,					/* no partitioning */
 	PART_RANGE,					/* range partitioning */
-	PART_HASH					/* hash partitioning */
+	PART_HASH,					/* hash partitioning */
 } partition_method_t;
 
 static partition_method_t partition_method = PART_NONE;
@@ -459,7 +459,7 @@ typedef enum EStatus
 	/* SQL errors */
 	ESTATUS_SERIALIZATION_ERROR,
 	ESTATUS_DEADLOCK_ERROR,
-	ESTATUS_OTHER_SQL_ERROR
+	ESTATUS_OTHER_SQL_ERROR,
 } EStatus;
 
 /*
@@ -470,7 +470,7 @@ typedef enum TStatus
 	TSTATUS_IDLE,
 	TSTATUS_IN_BLOCK,
 	TSTATUS_CONN_ERROR,
-	TSTATUS_OTHER_ERROR
+	TSTATUS_OTHER_ERROR,
 } TStatus;
 
 /* Various random sequences are initialized from this one. */
@@ -587,7 +587,7 @@ typedef enum
 	 * aborted because a command failed, CSTATE_FINISHED means success.
 	 */
 	CSTATE_ABORTED,
-	CSTATE_FINISHED
+	CSTATE_FINISHED,
 } ConnectionStateEnum;
 
 /*
@@ -697,7 +697,7 @@ typedef enum MetaCommand
 	META_ELSE,					/* \else */
 	META_ENDIF,					/* \endif */
 	META_STARTPIPELINE,			/* \startpipeline */
-	META_ENDPIPELINE			/* \endpipeline */
+	META_ENDPIPELINE,			/* \endpipeline */
 } MetaCommand;
 
 typedef enum QueryMode
@@ -4908,7 +4908,7 @@ initPopulateTable(PGconn *con, const char *table, int64 base,
 				  initRowMethod init_row)
 {
 	int			n;
-	int			k;
+	int64		k;
 	int			chars = 0;
 	PGresult   *res;
 	PQExpBufferData sql;
@@ -7837,14 +7837,23 @@ clear_socket_set(socket_set *sa)
 static void
 add_socket_to_set(socket_set *sa, int fd, int idx)
 {
+	/* See connect_slot() for background on this code. */
+#ifdef WIN32
+	if (sa->fds.fd_count + 1 >= FD_SETSIZE)
+	{
+		pg_log_error("too many concurrent database clients for this platform: %d",
+					 sa->fds.fd_count + 1);
+		exit(1);
+	}
+#else
 	if (fd < 0 || fd >= FD_SETSIZE)
 	{
-		/*
-		 * Doing a hard exit here is a bit grotty, but it doesn't seem worth
-		 * complicating the API to make it less grotty.
-		 */
-		pg_fatal("too many client connections for select()");
+		pg_log_error("socket file descriptor out of range for select(): %d",
+					 fd);
+		pg_log_error_hint("Try fewer concurrent database clients.");
+		exit(1);
 	}
+#endif
 	FD_SET(fd, &sa->fds);
 	if (fd > sa->maxfd)
 		sa->maxfd = fd;

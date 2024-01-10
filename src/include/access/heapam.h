@@ -4,7 +4,7 @@
  *	  POSTGRES heap access method definitions.
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/access/heapam.h
@@ -97,7 +97,7 @@ typedef enum
 	HEAPTUPLE_LIVE,				/* tuple is live (committed, no deleter) */
 	HEAPTUPLE_RECENTLY_DEAD,	/* tuple is dead, but not deletable yet */
 	HEAPTUPLE_INSERT_IN_PROGRESS,	/* inserting xact is still in progress */
-	HEAPTUPLE_DELETE_IN_PROGRESS	/* deleting xact is still in progress */
+	HEAPTUPLE_DELETE_IN_PROGRESS,	/* deleting xact is still in progress */
 } HTSV_Result;
 
 /*

@@ -3,7 +3,7 @@
  * relnode.c
  *	  Relation-node lookup/construction routines
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -22,6 +22,7 @@
 #include "optimizer/clauses.h"
 #include "optimizer/cost.h"
 #include "optimizer/inherit.h"
+#include "optimizer/optimizer.h"
 #include "optimizer/pathnode.h"
 #include "optimizer/paths.h"
 #include "optimizer/placeholder.h"
@@ -417,6 +418,19 @@ find_base_rel(PlannerInfo *root, int relid)
 	elog(ERROR, "no relation entry for relid %d", relid);
 
 	return NULL;				/* keep compiler quiet */
+}
+
+/*
+ * find_base_rel_noerr
+ *	  Find a base or otherrel relation entry, returning NULL if there's none
+ */
+RelOptInfo *
+find_base_rel_noerr(PlannerInfo *root, int relid)
+{
+	/* use an unsigned comparison to prevent negative array element access */
+	if ((uint32) relid < (uint32) root->simple_rel_array_size)
+		return root->simple_rel_array[relid];
+	return NULL;
 }
 
 /*
@@ -1092,6 +1106,7 @@ build_joinrel_tlist(PlannerInfo *root, RelOptInfo *joinrel,
 					bool can_null)
 {
 	Relids		relids = joinrel->relids;
+	int64		tuple_width = joinrel->reltarget->width;
 	ListCell   *vars;
 	ListCell   *lc;
 
@@ -1144,7 +1159,7 @@ build_joinrel_tlist(PlannerInfo *root, RelOptInfo *joinrel,
 				joinrel->reltarget->exprs = lappend(joinrel->reltarget->exprs,
 													phv);
 				/* Bubbling up the precomputed result has cost zero */
-				joinrel->reltarget->width += phinfo->ph_width;
+				tuple_width += phinfo->ph_width;
 			}
 			continue;
 		}
@@ -1165,7 +1180,7 @@ build_joinrel_tlist(PlannerInfo *root, RelOptInfo *joinrel,
 				list_nth(root->row_identity_vars, var->varattno - 1);
 
 			/* Update reltarget width estimate from RowIdentityVarInfo */
-			joinrel->reltarget->width += ridinfo->rowidwidth;
+			tuple_width += ridinfo->rowidwidth;
 		}
 		else
 		{
@@ -1181,7 +1196,7 @@ build_joinrel_tlist(PlannerInfo *root, RelOptInfo *joinrel,
 				continue;		/* nope, skip it */
 
 			/* Update reltarget width estimate from baserel's attr_widths */
-			joinrel->reltarget->width += baserel->attr_widths[ndx];
+			tuple_width += baserel->attr_widths[ndx];
 		}
 
 		/*
@@ -1221,6 +1236,8 @@ build_joinrel_tlist(PlannerInfo *root, RelOptInfo *joinrel,
 
 		/* Vars have cost zero, so no need to adjust reltarget->cost */
 	}
+
+	joinrel->reltarget->width = clamp_width_est(tuple_width);
 }
 
 /*

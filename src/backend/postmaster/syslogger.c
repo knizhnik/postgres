@@ -13,7 +13,7 @@
  *
  * Author: Andreas Pflug <pgadmin@pse-consulting.de>
  *
- * Copyright (c) 2004-2023, PostgreSQL Global Development Group
+ * Copyright (c) 2004-2024, PostgreSQL Global Development Group
  *
  *
  * IDENTIFICATION
@@ -311,7 +311,7 @@ SysLoggerMain(int argc, char *argv[])
 	 * syslog pipe, which implies that all other backends have exited
 	 * (including the postmaster).
 	 */
-	wes = CreateWaitEventSet(CurrentMemoryContext, 2);
+	wes = CreateWaitEventSet(NULL, 2);
 	AddWaitEventToSet(wes, WL_LATCH_SET, PGINVALID_SOCKET, MyLatch, NULL);
 #ifndef WIN32
 	AddWaitEventToSet(wes, WL_SOCKET_READABLE, syslogPipe[0], NULL, NULL);

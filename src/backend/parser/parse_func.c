@@ -3,7 +3,7 @@
  * parse_func.c
  *		handle function calls in parser
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -39,7 +39,7 @@
 typedef enum
 {
 	FUNCLOOKUP_NOSUCHFUNC,
-	FUNCLOOKUP_AMBIGUOUS
+	FUNCLOOKUP_AMBIGUOUS,
 } FuncLookupError;
 
 static void unify_hypothetical_args(ParseState *pstate,

@@ -25,7 +25,7 @@
  *
  * See gen_partprune_steps_internal() for more details on step generation.
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -82,7 +82,7 @@ typedef enum PartClauseMatchStatus
 	PARTCLAUSE_MATCH_NULLNESS,
 	PARTCLAUSE_MATCH_STEPS,
 	PARTCLAUSE_MATCH_CONTRADICT,
-	PARTCLAUSE_UNSUPPORTED
+	PARTCLAUSE_UNSUPPORTED,
 } PartClauseMatchStatus;
 
 /*
@@ -93,7 +93,7 @@ typedef enum PartClauseTarget
 {
 	PARTTARGET_PLANNER,			/* want to prune during planning */
 	PARTTARGET_INITIAL,			/* want to prune during executor startup */
-	PARTTARGET_EXEC				/* want to prune during each plan node scan */
+	PARTTARGET_EXEC,			/* want to prune during each plan node scan */
 } PartClauseTarget;
 
 /*

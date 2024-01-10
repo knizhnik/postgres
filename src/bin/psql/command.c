@@ -1,7 +1,7 @@
 /*
  * psql - the PostgreSQL interactive terminal
  *
- * Copyright (c) 2000-2023, PostgreSQL Global Development Group
+ * Copyright (c) 2000-2024, PostgreSQL Global Development Group
  *
  * src/bin/psql/command.c
  */
@@ -53,7 +53,7 @@
 typedef enum EditableObjectType
 {
 	EditableFunction,
-	EditableView
+	EditableView,
 } EditableObjectType;
 
 /* local function declarations */
@@ -2158,29 +2158,15 @@ exec_command_password(PsqlScanState scan_state, bool active_branch)
 		}
 		else
 		{
-			char	   *encrypted_password;
+			PGresult   *res = PQchangePassword(pset.db, user, pw1);
 
-			encrypted_password = PQencryptPasswordConn(pset.db, pw1, user, NULL);
-
-			if (!encrypted_password)
+			if (PQresultStatus(res) != PGRES_COMMAND_OK)
 			{
 				pg_log_info("%s", PQerrorMessage(pset.db));
 				success = false;
 			}
-			else
-			{
-				PGresult   *res;
 
-				printfPQExpBuffer(&buf, "ALTER USER %s PASSWORD ",
-								  fmtId(user));
-				appendStringLiteralConn(&buf, encrypted_password, pset.db);
-				res = PSQLexec(buf.data);
-				if (!res)
-					success = false;
-				else
-					PQclear(res);
-				PQfreemem(encrypted_password);
-			}
+			PQclear(res);
 		}
 
 		free(user);

@@ -2,7 +2,7 @@
 #
 # Makefile for backend/utils/activity
 #
-# Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+# Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
 # Portions Copyright (c) 1994, Regents of the University of California
 #
 # src/backend/utils/activity/Makefile
@@ -47,5 +47,5 @@ pgstat_wait_event.c: wait_event_types.h
 wait_event_types.h: $(top_srcdir)/src/backend/utils/activity/wait_event_names.txt generate-wait_event_types.pl
 	$(PERL) $(srcdir)/generate-wait_event_types.pl --code $<
 
-maintainer-clean: clean
+clean:
 	rm -f wait_event_types.h pgstat_wait_event.c wait_event_funcs_data.c

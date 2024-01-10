@@ -12,7 +12,7 @@
  * identifying statement boundaries in multi-statement source strings.
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/nodes/parsenodes.h
@@ -30,13 +30,6 @@
 #include "partitioning/partdefs.h"
 
 
-typedef enum OverridingKind
-{
-	OVERRIDING_NOT_SET = 0,
-	OVERRIDING_USER_VALUE,
-	OVERRIDING_SYSTEM_VALUE
-} OverridingKind;
-
 /* Possible sources of a Query */
 typedef enum QuerySource
 {
@@ -44,7 +37,7 @@ typedef enum QuerySource
 	QSRC_PARSER,				/* added by parse analysis (now unused) */
 	QSRC_INSTEAD_RULE,			/* added by unconditional INSTEAD rule */
 	QSRC_QUAL_INSTEAD_RULE,		/* added by conditional INSTEAD rule */
-	QSRC_NON_INSTEAD_RULE		/* added by non-INSTEAD rule */
+	QSRC_NON_INSTEAD_RULE,		/* added by non-INSTEAD rule */
 } QuerySource;
 
 /* Sort ordering options for ORDER BY and CREATE INDEX */
@@ -53,14 +46,14 @@ typedef enum SortByDir
 	SORTBY_DEFAULT,
 	SORTBY_ASC,
 	SORTBY_DESC,
-	SORTBY_USING				/* not allowed in CREATE INDEX ... */
+	SORTBY_USING,				/* not allowed in CREATE INDEX ... */
 } SortByDir;
 
 typedef enum SortByNulls
 {
 	SORTBY_NULLS_DEFAULT,
 	SORTBY_NULLS_FIRST,
-	SORTBY_NULLS_LAST
+	SORTBY_NULLS_LAST,
 } SortByNulls;
 
 /* Options for [ ALL | DISTINCT ] */
@@ -68,7 +61,7 @@ typedef enum SetQuantifier
 {
 	SET_QUANTIFIER_DEFAULT,
 	SET_QUANTIFIER_ALL,
-	SET_QUANTIFIER_DISTINCT
+	SET_QUANTIFIER_DISTINCT,
 } SetQuantifier;
 
 /*
@@ -320,7 +313,7 @@ typedef enum A_Expr_Kind
 	AEXPR_BETWEEN,				/* name must be "BETWEEN" */
 	AEXPR_NOT_BETWEEN,			/* name must be "NOT BETWEEN" */
 	AEXPR_BETWEEN_SYM,			/* name must be "BETWEEN SYMMETRIC" */
-	AEXPR_NOT_BETWEEN_SYM		/* name must be "NOT BETWEEN SYMMETRIC" */
+	AEXPR_NOT_BETWEEN_SYM,		/* name must be "NOT BETWEEN SYMMETRIC" */
 } A_Expr_Kind;
 
 typedef struct A_Expr
@@ -392,7 +385,7 @@ typedef enum RoleSpecType
 	ROLESPEC_CURRENT_ROLE,		/* role spec is CURRENT_ROLE */
 	ROLESPEC_CURRENT_USER,		/* role spec is CURRENT_USER */
 	ROLESPEC_SESSION_USER,		/* role spec is SESSION_USER */
-	ROLESPEC_PUBLIC				/* role name is "public" */
+	ROLESPEC_PUBLIC,			/* role name is "public" */
 } RoleSpecType;
 
 typedef struct RoleSpec
@@ -799,7 +792,7 @@ typedef enum DefElemAction
 	DEFELEM_UNSPEC,				/* no action given */
 	DEFELEM_SET,
 	DEFELEM_ADD,
-	DEFELEM_DROP
+	DEFELEM_DROP,
 } DefElemAction;
 
 typedef struct DefElem
@@ -865,7 +858,7 @@ typedef enum PartitionStrategy
 {
 	PARTITION_STRATEGY_LIST = 'l',
 	PARTITION_STRATEGY_RANGE = 'r',
-	PARTITION_STRATEGY_HASH = 'h'
+	PARTITION_STRATEGY_HASH = 'h',
 } PartitionStrategy;
 
 /*
@@ -917,7 +910,7 @@ typedef enum PartitionRangeDatumKind
 {
 	PARTITION_RANGE_DATUM_MINVALUE = -1,	/* less than any other value */
 	PARTITION_RANGE_DATUM_VALUE = 0,	/* a specific (bounded) value */
-	PARTITION_RANGE_DATUM_MAXVALUE = 1	/* greater than any other value */
+	PARTITION_RANGE_DATUM_MAXVALUE = 1, /* greater than any other value */
 } PartitionRangeDatumKind;
 
 typedef struct PartitionRangeDatum
@@ -1018,7 +1011,7 @@ typedef enum RTEKind
 	RTE_VALUES,					/* VALUES (<exprlist>), (<exprlist>), ... */
 	RTE_CTE,					/* common table expr (WITH list element) */
 	RTE_NAMEDTUPLESTORE,		/* tuplestore, e.g. for AFTER triggers */
-	RTE_RESULT					/* RTE represents an empty FROM clause; such
+	RTE_RESULT,					/* RTE represents an empty FROM clause; such
 								 * RTEs are added by the planner, they're not
 								 * present during parsing or rewriting */
 } RTEKind;
@@ -1315,7 +1308,7 @@ typedef enum WCOKind
 	WCO_RLS_UPDATE_CHECK,		/* RLS UPDATE WITH CHECK policy */
 	WCO_RLS_CONFLICT_CHECK,		/* RLS ON CONFLICT DO UPDATE USING policy */
 	WCO_RLS_MERGE_UPDATE_CHECK, /* RLS MERGE UPDATE USING policy */
-	WCO_RLS_MERGE_DELETE_CHECK	/* RLS MERGE DELETE USING policy */
+	WCO_RLS_MERGE_DELETE_CHECK, /* RLS MERGE DELETE USING policy */
 } WCOKind;
 
 typedef struct WithCheckOption
@@ -1453,7 +1446,7 @@ typedef enum GroupingSetKind
 	GROUPING_SET_SIMPLE,
 	GROUPING_SET_ROLLUP,
 	GROUPING_SET_CUBE,
-	GROUPING_SET_SETS
+	GROUPING_SET_SETS,
 } GroupingSetKind;
 
 typedef struct GroupingSet
@@ -1592,7 +1585,7 @@ typedef enum CTEMaterialize
 {
 	CTEMaterializeDefault,		/* no option specified */
 	CTEMaterializeAlways,		/* MATERIALIZED */
-	CTEMaterializeNever			/* NOT MATERIALIZED */
+	CTEMaterializeNever,		/* NOT MATERIALIZED */
 } CTEMaterialize;
 
 typedef struct CTESearchClause
@@ -1680,23 +1673,6 @@ typedef struct MergeWhenClause
 	/* the following members are only used in INSERT actions */
 	List	   *values;			/* VALUES to INSERT, or NULL */
 } MergeWhenClause;
-
-/*
- * MergeAction -
- *		Transformed representation of a WHEN clause in a MERGE statement
- */
-typedef struct MergeAction
-{
-	NodeTag		type;
-	bool		matched;		/* true=MATCHED, false=NOT MATCHED */
-	CmdType		commandType;	/* INSERT/UPDATE/DELETE/DO NOTHING */
-	/* OVERRIDING clause */
-	OverridingKind override pg_node_attr(query_jumble_ignore);
-	Node	   *qual;			/* transformed WHEN conditions */
-	List	   *targetList;		/* the target list (of TargetEntry) */
-	/* target attribute numbers of an UPDATE */
-	List	   *updateColnos pg_node_attr(query_jumble_ignore);
-} MergeAction;
 
 /*
  * TriggerTransition -
@@ -1972,7 +1948,7 @@ typedef enum SetOperation
 	SETOP_NONE = 0,
 	SETOP_UNION,
 	SETOP_INTERSECT,
-	SETOP_EXCEPT
+	SETOP_EXCEPT,
 } SetOperation;
 
 typedef struct SelectStmt
@@ -2168,7 +2144,7 @@ typedef enum ObjectType
 	OBJECT_TSTEMPLATE,
 	OBJECT_TYPE,
 	OBJECT_USER_MAPPING,
-	OBJECT_VIEW
+	OBJECT_VIEW,
 } ObjectType;
 
 /* ----------------------
@@ -2191,7 +2167,7 @@ typedef struct CreateSchemaStmt
 typedef enum DropBehavior
 {
 	DROP_RESTRICT,				/* drop fails if any dependent objects */
-	DROP_CASCADE				/* remove dependent objects too */
+	DROP_CASCADE,				/* remove dependent objects too */
 } DropBehavior;
 
 /* ----------------------
@@ -2216,6 +2192,7 @@ typedef enum AlterTableType
 	AT_DropNotNull,				/* alter column drop not null */
 	AT_SetNotNull,				/* alter column set not null */
 	AT_SetAttNotNull,			/* set attnotnull w/o a constraint */
+	AT_SetExpression,			/* alter column set expression */
 	AT_DropExpression,			/* alter column drop expression */
 	AT_SetStatistics,			/* alter column set statistics */
 	AT_SetOptions,				/* alter column set ( options ) */
@@ -2274,7 +2251,7 @@ typedef enum AlterTableType
 	AT_AddIdentity,				/* ADD IDENTITY */
 	AT_SetIdentity,				/* SET identity column options */
 	AT_DropIdentity,			/* DROP IDENTITY */
-	AT_ReAddStatistics			/* internal to commands/tablecmds.c */
+	AT_ReAddStatistics,			/* internal to commands/tablecmds.c */
 } AlterTableType;
 
 typedef struct ReplicaIdentityStmt
@@ -2346,7 +2323,7 @@ typedef enum GrantTargetType
 {
 	ACL_TARGET_OBJECT,			/* grant on specific named object(s) */
 	ACL_TARGET_ALL_IN_SCHEMA,	/* grant on all objects in given schema(s) */
-	ACL_TARGET_DEFAULTS			/* ALTER DEFAULT PRIVILEGES */
+	ACL_TARGET_DEFAULTS,		/* ALTER DEFAULT PRIVILEGES */
 } GrantTargetType;
 
 typedef struct GrantStmt
@@ -2473,7 +2450,7 @@ typedef enum VariableSetKind
 	VAR_SET_CURRENT,			/* SET var FROM CURRENT */
 	VAR_SET_MULTI,				/* special case for SET TRANSACTION ... */
 	VAR_RESET,					/* RESET var */
-	VAR_RESET_ALL				/* RESET ALL */
+	VAR_RESET_ALL,				/* RESET ALL */
 } VariableSetKind;
 
 typedef struct VariableSetStmt
@@ -2572,7 +2549,7 @@ typedef enum ConstrType			/* types of constraints */
 	CONSTR_ATTR_DEFERRABLE,		/* attributes for previous constraint node */
 	CONSTR_ATTR_NOT_DEFERRABLE,
 	CONSTR_ATTR_DEFERRED,
-	CONSTR_ATTR_IMMEDIATE
+	CONSTR_ATTR_IMMEDIATE,
 } ConstrType;
 
 /* Foreign key action codes */
@@ -2812,7 +2789,7 @@ typedef enum ImportForeignSchemaType
 {
 	FDW_IMPORT_SCHEMA_ALL,		/* all relations wanted */
 	FDW_IMPORT_SCHEMA_LIMIT_TO, /* include only listed tables in import */
-	FDW_IMPORT_SCHEMA_EXCEPT	/* exclude listed tables from import */
+	FDW_IMPORT_SCHEMA_EXCEPT,	/* exclude listed tables from import */
 } ImportForeignSchemaType;
 
 typedef struct ImportForeignSchemaStmt
@@ -2949,7 +2926,7 @@ typedef enum RoleStmtType
 {
 	ROLESTMT_ROLE,
 	ROLESTMT_USER,
-	ROLESTMT_GROUP
+	ROLESTMT_GROUP,
 } RoleStmtType;
 
 typedef struct CreateRoleStmt
@@ -3194,7 +3171,7 @@ typedef enum FetchDirection
 	FETCH_BACKWARD,
 	/* for these, howMany indicates a position; only one row is fetched */
 	FETCH_ABSOLUTE,
-	FETCH_RELATIVE
+	FETCH_RELATIVE,
 } FetchDirection;
 
 #define FETCH_ALL	LONG_MAX
@@ -3319,7 +3296,7 @@ typedef enum FunctionParameterMode
 	FUNC_PARAM_VARIADIC = 'v',	/* variadic (always input) */
 	FUNC_PARAM_TABLE = 't',		/* table function output column */
 	/* this is not used in pg_proc: */
-	FUNC_PARAM_DEFAULT = 'd'	/* default; effectively same as IN */
+	FUNC_PARAM_DEFAULT = 'd',	/* default; effectively same as IN */
 } FunctionParameterMode;
 
 typedef struct FunctionParameter
@@ -3535,7 +3512,7 @@ typedef enum TransactionStmtKind
 	TRANS_STMT_ROLLBACK_TO,
 	TRANS_STMT_PREPARE,
 	TRANS_STMT_COMMIT_PREPARED,
-	TRANS_STMT_ROLLBACK_PREPARED
+	TRANS_STMT_ROLLBACK_PREPARED,
 } TransactionStmtKind;
 
 typedef struct TransactionStmt
@@ -3608,7 +3585,7 @@ typedef enum ViewCheckOption
 {
 	NO_CHECK_OPTION,
 	LOCAL_CHECK_OPTION,
-	CASCADED_CHECK_OPTION
+	CASCADED_CHECK_OPTION,
 } ViewCheckOption;
 
 typedef struct ViewStmt
@@ -3800,7 +3777,7 @@ typedef enum DiscardMode
 	DISCARD_ALL,
 	DISCARD_PLANS,
 	DISCARD_SEQUENCES,
-	DISCARD_TEMP
+	DISCARD_TEMP,
 } DiscardMode;
 
 typedef struct DiscardStmt
@@ -3842,7 +3819,7 @@ typedef enum ReindexObjectType
 	REINDEX_OBJECT_TABLE,		/* table or materialized view */
 	REINDEX_OBJECT_SCHEMA,		/* schema */
 	REINDEX_OBJECT_SYSTEM,		/* system catalogs */
-	REINDEX_OBJECT_DATABASE		/* database */
+	REINDEX_OBJECT_DATABASE,	/* database */
 } ReindexObjectType;
 
 typedef struct ReindexStmt
@@ -3977,7 +3954,7 @@ typedef enum AlterTSConfigType
 	ALTER_TSCONFIG_ALTER_MAPPING_FOR_TOKEN,
 	ALTER_TSCONFIG_REPLACE_DICT,
 	ALTER_TSCONFIG_REPLACE_DICT_FOR_TOKEN,
-	ALTER_TSCONFIG_DROP_MAPPING
+	ALTER_TSCONFIG_DROP_MAPPING,
 } AlterTSConfigType;
 
 typedef struct AlterTSConfigurationStmt
@@ -4014,7 +3991,7 @@ typedef enum PublicationObjSpecType
 	PUBLICATIONOBJ_TABLES_IN_SCHEMA,	/* All tables in schema */
 	PUBLICATIONOBJ_TABLES_IN_CUR_SCHEMA,	/* All tables in first element of
 											 * search_path */
-	PUBLICATIONOBJ_CONTINUATION /* Continuation of previous type */
+	PUBLICATIONOBJ_CONTINUATION,	/* Continuation of previous type */
 } PublicationObjSpecType;
 
 typedef struct PublicationObjSpec
@@ -4039,7 +4016,7 @@ typedef enum AlterPublicationAction
 {
 	AP_AddObjects,				/* add objects to publication */
 	AP_DropObjects,				/* remove objects from publication */
-	AP_SetObjects				/* set list of objects */
+	AP_SetObjects,				/* set list of objects */
 } AlterPublicationAction;
 
 typedef struct AlterPublicationStmt
@@ -4078,7 +4055,7 @@ typedef enum AlterSubscriptionType
 	ALTER_SUBSCRIPTION_DROP_PUBLICATION,
 	ALTER_SUBSCRIPTION_REFRESH,
 	ALTER_SUBSCRIPTION_ENABLED,
-	ALTER_SUBSCRIPTION_SKIP
+	ALTER_SUBSCRIPTION_SKIP,
 } AlterSubscriptionType;
 
 typedef struct AlterSubscriptionStmt

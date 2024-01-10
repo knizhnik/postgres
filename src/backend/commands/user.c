@@ -3,7 +3,7 @@
  * user.c
  *	  Commands for manipulating roles (formerly called users).
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/backend/commands/user.c
@@ -64,7 +64,7 @@ typedef enum
 	RRG_REMOVE_ADMIN_OPTION,
 	RRG_REMOVE_INHERIT_OPTION,
 	RRG_REMOVE_SET_OPTION,
-	RRG_DELETE_GRANT
+	RRG_DELETE_GRANT,
 } RevokeRoleGrantAction;
 
 /* Potentially set by pg_upgrade_support functions */

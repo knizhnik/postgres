@@ -3,7 +3,7 @@
  * heap_surgery.c
  *	  Functions to perform surgery on the damaged heap table.
  *
- * Copyright (c) 2020-2023, PostgreSQL Global Development Group
+ * Copyright (c) 2020-2024, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  contrib/pg_surgery/heap_surgery.c
@@ -29,7 +29,7 @@ PG_MODULE_MAGIC;
 typedef enum HeapTupleForceOption
 {
 	HEAP_FORCE_KILL,
-	HEAP_FORCE_FREEZE
+	HEAP_FORCE_FREEZE,
 } HeapTupleForceOption;
 
 PG_FUNCTION_INFO_V1(heap_force_kill);

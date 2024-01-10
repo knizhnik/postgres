@@ -3,7 +3,7 @@
  * llvmjit.c
  *	  Core part of the LLVM JIT provider.
  *
- * Copyright (c) 2016-2023, PostgreSQL Global Development Group
+ * Copyright (c) 2016-2024, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/jit/llvm/llvmjit.c
@@ -18,6 +18,9 @@
 #include <llvm-c/BitWriter.h>
 #include <llvm-c/Core.h>
 #include <llvm-c/ExecutionEngine.h>
+#if LLVM_VERSION_MAJOR > 16
+#include <llvm-c/Transforms/PassBuilder.h>
+#endif
 #if LLVM_VERSION_MAJOR > 11
 #include <llvm-c/Orc.h>
 #include <llvm-c/OrcEE.h>
@@ -27,11 +30,13 @@
 #endif
 #include <llvm-c/Support.h>
 #include <llvm-c/Target.h>
+#if LLVM_VERSION_MAJOR < 17
 #include <llvm-c/Transforms/IPO.h>
 #include <llvm-c/Transforms/PassManagerBuilder.h>
 #include <llvm-c/Transforms/Scalar.h>
 #if LLVM_VERSION_MAJOR > 6
 #include <llvm-c/Transforms/Utils.h>
+#endif
 #endif
 
 #include "jit/llvmjit.h"
@@ -40,7 +45,7 @@
 #include "portability/instr_time.h"
 #include "storage/ipc.h"
 #include "utils/memutils.h"
-#include "utils/resowner_private.h"
+#include "utils/resowner.h"
 
 #define LLVMJIT_LLVM_CONTEXT_REUSE_MAX 100
 
@@ -64,8 +69,10 @@ LLVMTypeRef TypeStorageBool;
 LLVMTypeRef TypePGFunction;
 LLVMTypeRef StructNullableDatum;
 LLVMTypeRef StructHeapTupleData;
+LLVMTypeRef StructMinimalTupleData;
 LLVMTypeRef StructTupleDescData;
 LLVMTypeRef StructTupleTableSlot;
+LLVMTypeRef StructHeapTupleHeaderData;
 LLVMTypeRef StructHeapTupleTableSlot;
 LLVMTypeRef StructMinimalTupleTableSlot;
 LLVMTypeRef StructMemoryContextData;
@@ -76,8 +83,11 @@ LLVMTypeRef StructExprState;
 LLVMTypeRef StructAggState;
 LLVMTypeRef StructAggStatePerGroupData;
 LLVMTypeRef StructAggStatePerTransData;
+LLVMTypeRef StructPlanState;
 
 LLVMValueRef AttributeTemplate;
+LLVMValueRef ExecEvalSubroutineTemplate;
+LLVMValueRef ExecEvalBoolSubroutineTemplate;
 
 static LLVMModuleRef llvm_types_module = NULL;
 
@@ -120,6 +130,30 @@ static uint64_t llvm_resolve_symbol(const char *name, void *ctx);
 static LLVMOrcLLJITRef llvm_create_jit_instance(LLVMTargetMachineRef tm);
 static char *llvm_error_message(LLVMErrorRef error);
 #endif							/* LLVM_VERSION_MAJOR > 11 */
+
+/* ResourceOwner callbacks to hold JitContexts  */
+static void ResOwnerReleaseJitContext(Datum res);
+
+static const ResourceOwnerDesc jit_resowner_desc =
+{
+	.name = "LLVM JIT context",
+	.release_phase = RESOURCE_RELEASE_BEFORE_LOCKS,
+	.release_priority = RELEASE_PRIO_JIT_CONTEXTS,
+	.ReleaseResource = ResOwnerReleaseJitContext,
+	.DebugPrint = NULL			/* the default message is fine */
+};
+
+/* Convenience wrappers over ResourceOwnerRemember/Forget */
+static inline void
+ResourceOwnerRememberJIT(ResourceOwner owner, LLVMJitContext *handle)
+{
+	ResourceOwnerRemember(owner, PointerGetDatum(handle), &jit_resowner_desc);
+}
+static inline void
+ResourceOwnerForgetJIT(ResourceOwner owner, LLVMJitContext *handle)
+{
+	ResourceOwnerForget(owner, PointerGetDatum(handle), &jit_resowner_desc);
+}
 
 PG_MODULE_MAGIC;
 
@@ -210,7 +244,7 @@ llvm_create_context(int jitFlags)
 
 	llvm_recreate_llvm_context();
 
-	ResourceOwnerEnlargeJIT(CurrentResourceOwner);
+	ResourceOwnerEnlarge(CurrentResourceOwner);
 
 	context = MemoryContextAllocZero(TopMemoryContext,
 									 sizeof(LLVMJitContext));
@@ -218,7 +252,7 @@ llvm_create_context(int jitFlags)
 
 	/* ensure cleanup */
 	context->base.resowner = CurrentResourceOwner;
-	ResourceOwnerRememberJIT(CurrentResourceOwner, PointerGetDatum(context));
+	ResourceOwnerRememberJIT(CurrentResourceOwner, context);
 
 	llvm_jit_context_in_use_count++;
 
@@ -290,6 +324,9 @@ llvm_release_context(JitContext *context)
 	llvm_jit_context->handles = NIL;
 
 	llvm_leave_fatal_on_oom();
+
+	if (context->resowner)
+		ResourceOwnerForgetJIT(context->resowner, llvm_jit_context);
 }
 
 /*
@@ -451,11 +488,7 @@ llvm_pg_var_type(const char *varname)
 	if (!v_srcvar)
 		elog(ERROR, "variable %s not in llvmjit_types.c", varname);
 
-	/* look at the contained type */
-	typ = LLVMTypeOf(v_srcvar);
-	Assert(typ != NULL && LLVMGetTypeKind(typ) == LLVMPointerTypeKind);
-	typ = LLVMGetElementType(typ);
-	Assert(typ != NULL);
+	typ = LLVMGlobalGetValueType(v_srcvar);
 
 	return typ;
 }
@@ -467,12 +500,14 @@ llvm_pg_var_type(const char *varname)
 LLVMTypeRef
 llvm_pg_var_func_type(const char *varname)
 {
-	LLVMTypeRef typ = llvm_pg_var_type(varname);
+	LLVMValueRef v_srcvar;
+	LLVMTypeRef typ;
 
-	/* look at the contained type */
-	Assert(LLVMGetTypeKind(typ) == LLVMPointerTypeKind);
-	typ = LLVMGetElementType(typ);
-	Assert(typ != NULL && LLVMGetTypeKind(typ) == LLVMFunctionTypeKind);
+	v_srcvar = LLVMGetNamedFunction(llvm_types_module, varname);
+	if (!v_srcvar)
+		elog(ERROR, "function %s not in llvmjit_types.c", varname);
+
+	typ = LLVMGetFunctionType(v_srcvar);
 
 	return typ;
 }
@@ -502,7 +537,7 @@ llvm_pg_func(LLVMModuleRef mod, const char *funcname)
 
 	v_fn = LLVMAddFunction(mod,
 						   funcname,
-						   LLVMGetElementType(LLVMTypeOf(v_srcfn)));
+						   LLVMGetFunctionType(v_srcfn));
 	llvm_copy_attributes(v_srcfn, v_fn);
 
 	return v_fn;
@@ -598,7 +633,7 @@ llvm_function_reference(LLVMJitContext *context,
 							fcinfo->flinfo->fn_oid);
 		v_fn = LLVMGetNamedGlobal(mod, funcname);
 		if (v_fn != 0)
-			return LLVMBuildLoad(builder, v_fn, "");
+			return l_load(builder, TypePGFunction, v_fn, "");
 
 		v_fn_addr = l_ptr_const(fcinfo->flinfo->fn_addr, TypePGFunction);
 
@@ -608,7 +643,7 @@ llvm_function_reference(LLVMJitContext *context,
 		LLVMSetLinkage(v_fn, LLVMPrivateLinkage);
 		LLVMSetUnnamedAddr(v_fn, true);
 
-		return LLVMBuildLoad(builder, v_fn, "");
+		return l_load(builder, TypePGFunction, v_fn, "");
 	}
 
 	/* check if function already has been added */
@@ -616,7 +651,7 @@ llvm_function_reference(LLVMJitContext *context,
 	if (v_fn != 0)
 		return v_fn;
 
-	v_fn = LLVMAddFunction(mod, funcname, LLVMGetElementType(TypePGFunction));
+	v_fn = LLVMAddFunction(mod, funcname, LLVMGetFunctionType(AttributeTemplate));
 
 	return v_fn;
 }
@@ -627,6 +662,7 @@ llvm_function_reference(LLVMJitContext *context,
 static void
 llvm_optimize_module(LLVMJitContext *context, LLVMModuleRef module)
 {
+#if LLVM_VERSION_MAJOR < 17
 	LLVMPassManagerBuilderRef llvm_pmb;
 	LLVMPassManagerRef llvm_mpm;
 	LLVMPassManagerRef llvm_fpm;
@@ -690,6 +726,31 @@ llvm_optimize_module(LLVMJitContext *context, LLVMModuleRef module)
 	LLVMDisposePassManager(llvm_mpm);
 
 	LLVMPassManagerBuilderDispose(llvm_pmb);
+#else
+	LLVMPassBuilderOptionsRef options;
+	LLVMErrorRef err;
+	const char *passes;
+
+	if (context->base.flags & PGJIT_OPT3)
+		passes = "default<O3>";
+	else
+		passes = "default<O0>,mem2reg";
+
+	options = LLVMCreatePassBuilderOptions();
+
+#ifdef LLVM_PASS_DEBUG
+	LLVMPassBuilderOptionsSetDebugLogging(options, 1);
+#endif
+
+	LLVMPassBuilderOptionsSetInlinerThreshold(options, 512);
+
+	err = LLVMRunPasses(module, passes, NULL, options);
+
+	if (err)
+		elog(ERROR, "failed to JIT module: %s", llvm_error_message(err));
+
+	LLVMDisposePassBuilderOptions(options);
+#endif
 }
 
 /*
@@ -874,12 +935,15 @@ llvm_session_initialize(void)
 	}
 
 	/*
-	 * When targeting an LLVM version with opaque pointers enabled by default,
-	 * turn them off for the context we build our code in.  We don't need to
-	 * do so for other contexts (e.g. llvm_ts_context).  Once the IR is
-	 * generated, it carries the necessary information.
+	 * When targeting LLVM 15, turn off opaque pointers for the context we
+	 * build our code in.  We don't need to do so for other contexts (e.g.
+	 * llvm_ts_context).  Once the IR is generated, it carries the necessary
+	 * information.
+	 *
+	 * For 16 and above, opaque pointers must be used, and we have special
+	 * code for that.
 	 */
-#if LLVM_VERSION_MAJOR > 14
+#if LLVM_VERSION_MAJOR == 15
 	LLVMContextSetOpaquePointers(LLVMGetGlobalContext(), false);
 #endif
 
@@ -1050,15 +1114,7 @@ load_return_type(LLVMModuleRef mod, const char *name)
 	if (!value)
 		elog(ERROR, "function %s is unknown", name);
 
-	/* get type of function pointer */
-	typ = LLVMTypeOf(value);
-	Assert(typ != NULL);
-	/* dereference pointer */
-	typ = LLVMGetElementType(typ);
-	Assert(typ != NULL);
-	/* and look at return type */
-	typ = LLVMGetReturnType(typ);
-	Assert(typ != NULL);
+	typ = LLVMGetFunctionReturnType(value); /* in llvmjit_wrap.cpp */
 
 	return typ;
 }
@@ -1123,12 +1179,17 @@ llvm_create_types(void)
 	StructHeapTupleTableSlot = llvm_pg_var_type("StructHeapTupleTableSlot");
 	StructMinimalTupleTableSlot = llvm_pg_var_type("StructMinimalTupleTableSlot");
 	StructHeapTupleData = llvm_pg_var_type("StructHeapTupleData");
+	StructHeapTupleHeaderData = llvm_pg_var_type("StructHeapTupleHeaderData");
 	StructTupleDescData = llvm_pg_var_type("StructTupleDescData");
 	StructAggState = llvm_pg_var_type("StructAggState");
 	StructAggStatePerGroupData = llvm_pg_var_type("StructAggStatePerGroupData");
 	StructAggStatePerTransData = llvm_pg_var_type("StructAggStatePerTransData");
+	StructPlanState = llvm_pg_var_type("StructPlanState");
+	StructMinimalTupleData = llvm_pg_var_type("StructMinimalTupleData");
 
 	AttributeTemplate = LLVMGetNamedFunction(llvm_types_module, "AttributeTemplate");
+	ExecEvalSubroutineTemplate = LLVMGetNamedFunction(llvm_types_module, "ExecEvalSubroutineTemplate");
+	ExecEvalBoolSubroutineTemplate = LLVMGetNamedFunction(llvm_types_module, "ExecEvalBoolSubroutineTemplate");
 }
 
 /*
@@ -1360,3 +1421,15 @@ llvm_error_message(LLVMErrorRef error)
 }
 
 #endif							/* LLVM_VERSION_MAJOR > 11 */
+
+/*
+ * ResourceOwner callbacks
+ */
+static void
+ResOwnerReleaseJitContext(Datum res)
+{
+	JitContext *context = (JitContext *) DatumGetPointer(res);
+
+	context->resowner = NULL;
+	jit_release_context(context);
+}

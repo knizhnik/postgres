@@ -35,8 +35,6 @@ include $(top_builddir)/src/Makefile.global
 override CPPFLAGS := -I$(top_builddir)/src/port -DFRONTEND $(CPPFLAGS)
 LIBS += $(PTHREAD_LIBS)
 
-# If you add objects here, see also src/tools/msvc/Mkvcbuild.pm
-
 OBJS = \
 	$(LIBOBJS) \
 	$(PG_CRC32C_OBJS) \
@@ -154,6 +152,6 @@ pg_config_paths.h: $(top_builddir)/src/Makefile.global
 	echo "#define HTMLDIR \"$(htmldir)\"" >>$@
 	echo "#define MANDIR \"$(mandir)\"" >>$@
 
-clean distclean maintainer-clean:
+clean distclean:
 	rm -f libpgport.a libpgport_shlib.a libpgport_srv.a
 	rm -f $(OBJS) $(OBJS_SHLIB) $(OBJS_SRV) pg_config_paths.h

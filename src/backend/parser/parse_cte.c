@@ -3,7 +3,7 @@
  * parse_cte.c
  *	  handle CTEs (common table expressions) in parser
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -35,7 +35,7 @@ typedef enum
 	RECURSION_SUBLINK,			/* inside a sublink */
 	RECURSION_OUTERJOIN,		/* inside nullable side of an outer join */
 	RECURSION_INTERSECT,		/* underneath INTERSECT (ALL) */
-	RECURSION_EXCEPT			/* underneath EXCEPT (ALL) */
+	RECURSION_EXCEPT,			/* underneath EXCEPT (ALL) */
 } RecursionContext;
 
 /* Associated error messages --- each must have one %s for CTE name */

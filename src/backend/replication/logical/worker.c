@@ -2,7 +2,7 @@
  * worker.c
  *	   PostgreSQL logical replication worker (apply)
  *
- * Copyright (c) 2016-2023, PostgreSQL Global Development Group
+ * Copyright (c) 2016-2024, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/replication/logical/worker.c
@@ -289,7 +289,7 @@ typedef enum
 	TRANS_LEADER_SERIALIZE,
 	TRANS_LEADER_SEND_TO_PARALLEL,
 	TRANS_LEADER_PARTIAL_SERIALIZE,
-	TRANS_PARALLEL_APPLY
+	TRANS_PARALLEL_APPLY,
 } TransApplyAction;
 
 /* errcontext tracker */
@@ -2019,7 +2019,6 @@ void
 apply_spooled_messages(FileSet *stream_fileset, TransactionId xid,
 					   XLogRecPtr lsn)
 {
-	StringInfoData s2;
 	int			nchanges;
 	char		path[MAXPGPATH];
 	char	   *buffer = NULL;
@@ -2057,7 +2056,6 @@ apply_spooled_messages(FileSet *stream_fileset, TransactionId xid,
 	CurrentResourceOwner = oldowner;
 
 	buffer = palloc(BLCKSZ);
-	initStringInfo(&s2);
 
 	MemoryContextSwitchTo(oldcxt);
 
@@ -2079,6 +2077,7 @@ apply_spooled_messages(FileSet *stream_fileset, TransactionId xid,
 	nchanges = 0;
 	while (true)
 	{
+		StringInfoData s2;
 		size_t		nbytes;
 		int			len;
 
@@ -2104,9 +2103,8 @@ apply_spooled_messages(FileSet *stream_fileset, TransactionId xid,
 
 		BufFileTell(stream_fd, &fileno, &offset);
 
-		/* copy the buffer to the stringinfo and call apply_dispatch */
-		resetStringInfo(&s2);
-		appendBinaryStringInfo(&s2, buffer, len);
+		/* init a stringinfo using the buffer and call apply_dispatch */
+		initReadOnlyStringInfo(&s2, buffer, len);
 
 		/* Ensure we are reading the data into our memory context. */
 		oldcxt = MemoryContextSwitchTo(ApplyMessageContext);
@@ -3582,10 +3580,7 @@ LogicalRepApplyLoop(XLogRecPtr last_received)
 					/* Ensure we are reading the data into our memory context. */
 					MemoryContextSwitchTo(ApplyMessageContext);
 
-					s.data = buf;
-					s.len = len;
-					s.cursor = 0;
-					s.maxlen = -1;
+					initReadOnlyStringInfo(&s, buf, len);
 
 					c = pq_getmsgbyte(&s);
 
@@ -3652,7 +3647,7 @@ LogicalRepApplyLoop(XLogRecPtr last_received)
 		}
 
 		/* Cleanup the memory. */
-		MemoryContextResetAndDeleteChildren(ApplyMessageContext);
+		MemoryContextReset(ApplyMessageContext);
 		MemoryContextSwitchTo(TopMemoryContext);
 
 		/* Check if we need to exit the streaming loop. */
@@ -3962,6 +3957,24 @@ maybe_reread_subscription(void)
 			ereport(LOG,
 					(errmsg("logical replication worker for subscription \"%s\" will restart because of a parameter change",
 							MySubscription->name)));
+
+		apply_worker_exit();
+	}
+
+	/*
+	 * Exit if the subscription owner's superuser privileges have been
+	 * revoked.
+	 */
+	if (!newsub->ownersuperuser && MySubscription->ownersuperuser)
+	{
+		if (am_parallel_apply_worker())
+			ereport(LOG,
+					errmsg("logical replication parallel apply worker for subscription \"%s\" will stop because the subscription owner's superuser privileges have been revoked",
+						   MySubscription->name));
+		else
+			ereport(LOG,
+					errmsg("logical replication worker for subscription \"%s\" will restart because the subscription owner's superuser privileges have been revoked",
+						   MySubscription->name));
 
 		apply_worker_exit();
 	}
@@ -4492,13 +4505,11 @@ run_apply_worker()
 	replorigin_session_setup(originid, 0);
 	replorigin_session_origin = originid;
 	origin_startpos = replorigin_session_get_progress(false);
+	CommitTransactionCommand();
 
 	/* Is the use of a password mandatory? */
 	must_use_password = MySubscription->passwordrequired &&
-		!superuser_arg(MySubscription->owner);
-
-	/* Note that the superuser_arg call can access the DB */
-	CommitTransactionCommand();
+		!MySubscription->ownersuperuser;
 
 	LogRepWorkerWalRcvConn = walrcv_connect(MySubscription->conninfo, true,
 											must_use_password,
@@ -4621,8 +4632,15 @@ InitializeLogRepWorker(void)
 	SetConfigOption("synchronous_commit", MySubscription->synccommit,
 					PGC_BACKEND, PGC_S_OVERRIDE);
 
-	/* Keep us informed about subscription changes. */
+	/*
+	 * Keep us informed about subscription or role changes. Note that the
+	 * role's superuser privilege can be revoked.
+	 */
 	CacheRegisterSyscacheCallback(SUBSCRIPTIONOID,
+								  subscription_change_cb,
+								  (Datum) 0);
+
+	CacheRegisterSyscacheCallback(AUTHOID,
 								  subscription_change_cb,
 								  (Datum) 0);
 

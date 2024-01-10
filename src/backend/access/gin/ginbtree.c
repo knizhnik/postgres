@@ -4,7 +4,7 @@
  *	  page utilities routines for the postgres inverted index access method.
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * IDENTIFICATION
@@ -272,7 +272,11 @@ ginFindParents(GinBtree btree, GinBtreeStack *stack)
 			blkno = GinPageGetOpaque(page)->rightlink;
 			if (blkno == InvalidBlockNumber)
 			{
-				UnlockReleaseBuffer(buffer);
+				/* Link not present in this level */
+				LockBuffer(buffer, GIN_UNLOCK);
+				/* Do not release pin on the root buffer */
+				if (buffer != root->buffer)
+					ReleaseBuffer(buffer);
 				break;
 			}
 			buffer = ginStepRight(buffer, btree->index, GIN_EXCLUSIVE);
@@ -387,24 +391,22 @@ ginPlaceToPage(GinBtree btree, GinBtreeStack *stack,
 		START_CRIT_SECTION();
 
 		if (RelationNeedsWAL(btree->index) && !btree->isBuild)
-		{
 			XLogBeginInsert();
-			XLogRegisterBuffer(0, stack->buffer, REGBUF_STANDARD);
-			if (BufferIsValid(childbuf))
-				XLogRegisterBuffer(1, childbuf, REGBUF_STANDARD);
-		}
 
-		/* Perform the page update, and register any extra WAL data */
+		/*
+		 * Perform the page update, dirty and register stack->buffer, and
+		 * register any extra WAL data.
+		 */
 		btree->execPlaceToPage(btree, stack->buffer, stack,
 							   insertdata, updateblkno, ptp_workspace);
-
-		MarkBufferDirty(stack->buffer);
 
 		/* An insert to an internal page finishes the split of the child. */
 		if (BufferIsValid(childbuf))
 		{
 			GinPageGetOpaque(childpage)->flags &= ~GIN_INCOMPLETE_SPLIT;
 			MarkBufferDirty(childbuf);
+			if (RelationNeedsWAL(btree->index) && !btree->isBuild)
+				XLogRegisterBuffer(1, childbuf, REGBUF_STANDARD);
 		}
 
 		if (RelationNeedsWAL(btree->index) && !btree->isBuild)

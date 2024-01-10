@@ -4,7 +4,7 @@
  *	  POSTGRES relation descriptor (a/k/a relcache entry) definitions.
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/utils/rel.h
@@ -329,7 +329,7 @@ typedef enum StdRdOptIndexCleanup
 {
 	STDRD_OPTION_VACUUM_INDEX_CLEANUP_AUTO = 0,
 	STDRD_OPTION_VACUUM_INDEX_CLEANUP_OFF,
-	STDRD_OPTION_VACUUM_INDEX_CLEANUP_ON
+	STDRD_OPTION_VACUUM_INDEX_CLEANUP_ON,
 } StdRdOptIndexCleanup;
 
 typedef struct StdRdOptions
@@ -402,7 +402,7 @@ typedef enum ViewOptCheckOption
 {
 	VIEW_OPTION_CHECK_OPTION_NOT_SET,
 	VIEW_OPTION_CHECK_OPTION_LOCAL,
-	VIEW_OPTION_CHECK_OPTION_CASCADED
+	VIEW_OPTION_CHECK_OPTION_CASCADED,
 } ViewOptCheckOption;
 
 /*

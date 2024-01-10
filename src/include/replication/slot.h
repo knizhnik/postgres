@@ -2,7 +2,7 @@
  * slot.h
  *	   Replication slot management.
  *
- * Copyright (c) 2012-2023, PostgreSQL Global Development Group
+ * Copyright (c) 2012-2024, PostgreSQL Global Development Group
  *
  *-------------------------------------------------------------------------
  */
@@ -34,7 +34,7 @@ typedef enum ReplicationSlotPersistency
 {
 	RS_PERSISTENT,
 	RS_EPHEMERAL,
-	RS_TEMPORARY
+	RS_TEMPORARY,
 } ReplicationSlotPersistency;
 
 /*

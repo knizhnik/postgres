@@ -45,7 +45,7 @@
  * and we'd like to still refer to them via C struct offsets.
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *
@@ -68,7 +68,16 @@
 #include "utils/memutils.h"
 
 
-/* Does att's datatype allow packing into the 1-byte-header varlena format? */
+/*
+ * Does att's datatype allow packing into the 1-byte-header varlena format?
+ * While functions that use TupleDescAttr() and assign attstorage =
+ * TYPSTORAGE_PLAIN cannot use packed varlena headers, functions that call
+ * TupleDescInitEntry() use typeForm->typstorage (TYPSTORAGE_EXTENDED) and
+ * can use packed varlena headers, e.g.:
+ *     CREATE TABLE test(a VARCHAR(10000) STORAGE PLAIN);
+ *     INSERT INTO test VALUES (repeat('A',10));
+ * This can be verified with pageinspect.
+ */
 #define ATT_IS_PACKABLE(att) \
 	((att)->attlen == -1 && (att)->attstorage != TYPSTORAGE_PLAIN)
 /* Use this if it's already known varlena */
@@ -76,7 +85,7 @@
 	((att)->attstorage != TYPSTORAGE_PLAIN)
 
 /*
- * Setup for cacheing pass-by-ref missing attributes in a way that survives
+ * Setup for caching pass-by-ref missing attributes in a way that survives
  * tupleDesc destruction.
  */
 

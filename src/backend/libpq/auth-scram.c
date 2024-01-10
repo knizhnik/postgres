@@ -80,7 +80,7 @@
  * general, after logging in, but let's do what we can here.
  *
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/backend/libpq/auth-scram.c
@@ -129,7 +129,7 @@ typedef enum
 {
 	SCRAM_AUTH_INIT,
 	SCRAM_AUTH_SALT_SENT,
-	SCRAM_AUTH_FINISHED
+	SCRAM_AUTH_FINISHED,
 } scram_state_enum;
 
 typedef struct

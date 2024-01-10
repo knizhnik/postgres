@@ -1,5 +1,5 @@
 
-# Copyright (c) 2021-2023, PostgreSQL Global Development Group
+# Copyright (c) 2021-2024, PostgreSQL Global Development Group
 
 # Test cascading logical replication of 2PC.
 #
@@ -8,7 +8,7 @@
 # Two-phase and parallel apply will be tested in 023_twophase_stream, so we
 # didn't add a parallel apply version for the tests in this file.
 use strict;
-use warnings;
+use warnings FATAL => 'all';
 use PostgreSQL::Test::Cluster;
 use PostgreSQL::Test::Utils;
 use Test::More;
@@ -39,7 +39,7 @@ logical_decoding_work_mem = 64kB
 $node_B->start;
 # node_C
 my $node_C = PostgreSQL::Test::Cluster->new('node_C');
-$node_C->init(allows_streaming => 'logical');
+$node_C->init;
 $node_C->append_conf(
 	'postgresql.conf', qq(
 max_prepared_transactions = 10

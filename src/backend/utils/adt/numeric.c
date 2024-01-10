@@ -11,7 +11,7 @@
  * Transactions on Mathematical Software, Vol. 24, No. 4, December 1998,
  * pages 359-367.
  *
- * Copyright (c) 1998-2023, PostgreSQL Global Development Group
+ * Copyright (c) 1998-2024, PostgreSQL Global Development Group
  *
  * IDENTIFICATION
  *	  src/backend/utils/adt/numeric.c
@@ -4430,35 +4430,62 @@ int8_numeric(PG_FUNCTION_ARGS)
 	PG_RETURN_NUMERIC(int64_to_numeric(val));
 }
 
+int64
+numeric_int8_opt_error(Numeric num, bool *have_error)
+{
+	NumericVar	x;
+	int64		result;
+
+	if (have_error)
+		*have_error = false;
+
+	if (NUMERIC_IS_SPECIAL(num))
+	{
+		if (have_error)
+		{
+			*have_error = true;
+			return 0;
+		}
+		else
+		{
+			if (NUMERIC_IS_NAN(num))
+				ereport(ERROR,
+						(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+						 errmsg("cannot convert NaN to %s", "bigint")));
+			else
+				ereport(ERROR,
+						(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
+						 errmsg("cannot convert infinity to %s", "bigint")));
+		}
+	}
+
+	/* Convert to variable format, then convert to int8 */
+	init_var_from_num(num, &x);
+
+	if (!numericvar_to_int64(&x, &result))
+	{
+		if (have_error)
+		{
+			*have_error = true;
+			return 0;
+		}
+		else
+		{
+			ereport(ERROR,
+					(errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
+					 errmsg("bigint out of range")));
+		}
+	}
+
+	return result;
+}
 
 Datum
 numeric_int8(PG_FUNCTION_ARGS)
 {
 	Numeric		num = PG_GETARG_NUMERIC(0);
-	NumericVar	x;
-	int64		result;
 
-	if (NUMERIC_IS_SPECIAL(num))
-	{
-		if (NUMERIC_IS_NAN(num))
-			ereport(ERROR,
-					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-					 errmsg("cannot convert NaN to %s", "bigint")));
-		else
-			ereport(ERROR,
-					(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),
-					 errmsg("cannot convert infinity to %s", "bigint")));
-	}
-
-	/* Convert to variable format and thence to int8 */
-	init_var_from_num(num, &x);
-
-	if (!numericvar_to_int64(&x, &result))
-		ereport(ERROR,
-				(errcode(ERRCODE_NUMERIC_VALUE_OUT_OF_RANGE),
-				 errmsg("bigint out of range")));
-
-	PG_RETURN_INT64(result);
+	PG_RETURN_INT64(numeric_int8_opt_error(num, NULL));
 }
 
 
@@ -5190,12 +5217,11 @@ numeric_avg_deserialize(PG_FUNCTION_ARGS)
 	init_var(&tmp_var);
 
 	/*
-	 * Copy the bytea into a StringInfo so that we can "receive" it using the
-	 * standard recv-function infrastructure.
+	 * Initialize a StringInfo so that we can "receive" it using the standard
+	 * recv-function infrastructure.
 	 */
-	initStringInfo(&buf);
-	appendBinaryStringInfo(&buf,
-						   VARDATA_ANY(sstate), VARSIZE_ANY_EXHDR(sstate));
+	initReadOnlyStringInfo(&buf, VARDATA_ANY(sstate),
+						   VARSIZE_ANY_EXHDR(sstate));
 
 	result = makeNumericAggStateCurrentContext(false);
 
@@ -5222,7 +5248,6 @@ numeric_avg_deserialize(PG_FUNCTION_ARGS)
 	result->nInfcount = pq_getmsgint64(&buf);
 
 	pq_getmsgend(&buf);
-	pfree(buf.data);
 
 	free_var(&tmp_var);
 
@@ -5306,12 +5331,11 @@ numeric_deserialize(PG_FUNCTION_ARGS)
 	init_var(&tmp_var);
 
 	/*
-	 * Copy the bytea into a StringInfo so that we can "receive" it using the
-	 * standard recv-function infrastructure.
+	 * Initialize a StringInfo so that we can "receive" it using the standard
+	 * recv-function infrastructure.
 	 */
-	initStringInfo(&buf);
-	appendBinaryStringInfo(&buf,
-						   VARDATA_ANY(sstate), VARSIZE_ANY_EXHDR(sstate));
+	initReadOnlyStringInfo(&buf, VARDATA_ANY(sstate),
+						   VARSIZE_ANY_EXHDR(sstate));
 
 	result = makeNumericAggStateCurrentContext(false);
 
@@ -5342,7 +5366,6 @@ numeric_deserialize(PG_FUNCTION_ARGS)
 	result->nInfcount = pq_getmsgint64(&buf);
 
 	pq_getmsgend(&buf);
-	pfree(buf.data);
 
 	free_var(&tmp_var);
 
@@ -5677,12 +5700,11 @@ numeric_poly_deserialize(PG_FUNCTION_ARGS)
 	init_var(&tmp_var);
 
 	/*
-	 * Copy the bytea into a StringInfo so that we can "receive" it using the
-	 * standard recv-function infrastructure.
+	 * Initialize a StringInfo so that we can "receive" it using the standard
+	 * recv-function infrastructure.
 	 */
-	initStringInfo(&buf);
-	appendBinaryStringInfo(&buf,
-						   VARDATA_ANY(sstate), VARSIZE_ANY_EXHDR(sstate));
+	initReadOnlyStringInfo(&buf, VARDATA_ANY(sstate),
+						   VARSIZE_ANY_EXHDR(sstate));
 
 	result = makePolyNumAggStateCurrentContext(false);
 
@@ -5706,7 +5728,6 @@ numeric_poly_deserialize(PG_FUNCTION_ARGS)
 #endif
 
 	pq_getmsgend(&buf);
-	pfree(buf.data);
 
 	free_var(&tmp_var);
 
@@ -5868,12 +5889,11 @@ int8_avg_deserialize(PG_FUNCTION_ARGS)
 	init_var(&tmp_var);
 
 	/*
-	 * Copy the bytea into a StringInfo so that we can "receive" it using the
-	 * standard recv-function infrastructure.
+	 * Initialize a StringInfo so that we can "receive" it using the standard
+	 * recv-function infrastructure.
 	 */
-	initStringInfo(&buf);
-	appendBinaryStringInfo(&buf,
-						   VARDATA_ANY(sstate), VARSIZE_ANY_EXHDR(sstate));
+	initReadOnlyStringInfo(&buf, VARDATA_ANY(sstate),
+						   VARSIZE_ANY_EXHDR(sstate));
 
 	result = makePolyNumAggStateCurrentContext(false);
 
@@ -5889,7 +5909,6 @@ int8_avg_deserialize(PG_FUNCTION_ARGS)
 #endif
 
 	pq_getmsgend(&buf);
-	pfree(buf.data);
 
 	free_var(&tmp_var);
 

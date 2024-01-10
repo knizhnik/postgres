@@ -5,7 +5,7 @@
  *
  * See plancache.c for comments.
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  * src/include/utils/plancache.h
@@ -31,7 +31,7 @@ typedef enum
 {
 	PLAN_CACHE_MODE_AUTO,
 	PLAN_CACHE_MODE_FORCE_GENERIC_PLAN,
-	PLAN_CACHE_MODE_FORCE_CUSTOM_PLAN
+	PLAN_CACHE_MODE_FORCE_CUSTOM_PLAN,
 }			PlanCacheMode;
 
 /* GUC parameter */
@@ -187,6 +187,8 @@ typedef struct CachedExpression
 
 extern void InitPlanCache(void);
 extern void ResetPlanCache(void);
+
+extern void ReleaseAllPlanCacheRefsInOwner(ResourceOwner owner);
 
 extern CachedPlanSource *CreateCachedPlan(struct RawStmt *raw_parse_tree,
 										  const char *query_string,

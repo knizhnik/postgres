@@ -7,7 +7,7 @@
  * (null-terminated text) or arbitrary binary data.  All storage is allocated
  * with palloc() (falling back to malloc in frontend code).
  *
- * Portions Copyright (c) 1996-2023, PostgreSQL Global Development Group
+ * Portions Copyright (c) 1996-2024, PostgreSQL Global Development Group
  * Portions Copyright (c) 1994, Regents of the University of California
  *
  *	  src/common/stringinfo.c
@@ -70,10 +70,16 @@ initStringInfo(StringInfo str)
  *
  * Reset the StringInfo: the data buffer remains valid, but its
  * previous content, if any, is cleared.
+ *
+ * Read-only StringInfos as initialized by initReadOnlyStringInfo cannot be
+ * reset.
  */
 void
 resetStringInfo(StringInfo str)
 {
+	/* don't allow resets of read-only StringInfos */
+	Assert(str->maxlen != 0);
+
 	str->data[0] = '\0';
 	str->len = 0;
 	str->cursor = 0;
@@ -283,6 +289,9 @@ void
 enlargeStringInfo(StringInfo str, int needed)
 {
 	int			newlen;
+
+	/* validate this is not a read-only StringInfo */
+	Assert(str->maxlen != 0);
 
 	/*
 	 * Guard against out-of-range "needed" values.  Without this, we can get
