@@ -3370,6 +3370,21 @@ apply_dispatch(StringInfo s)
 	LogicalRepMsgType action = pq_getmsgbyte(s);
 	LogicalRepMsgType saved_command;
 
+	if (am_parallel_apply_worker() && MyParallelShared->do_prefetch)
+	{
+		switch (action)
+		{
+			case LOGICAL_REP_MSG_INSERT:
+			case LOGICAL_REP_MSG_UPDATE:
+			case LOGICAL_REP_MSG_DELETE:
+				pa_prefetch_handle_modification(s, action);
+				break;
+			default:
+				break;
+		}
+		return;
+	}
+
 	/*
 	 * Set the current command being applied. Since this function can be
 	 * called recursively when applying spooled changes, save the current
@@ -3552,7 +3567,6 @@ store_flush_position(XLogRecPtr remote_lsn, XLogRecPtr local_lsn)
 	MemoryContextSwitchTo(ApplyMessageContext);
 }
 
-
 /* Update statistics of the worker. */
 static void
 UpdateWorkerStats(XLogRecPtr last_lsn, TimestampTz send_time, bool reply)
@@ -3567,6 +3581,16 @@ UpdateWorkerStats(XLogRecPtr last_lsn, TimestampTz send_time, bool reply)
 	}
 }
 
+static ParallelApplyWorkerInfo* prefetch_workers[MAX_LR_PREFETCH_WORKERS];
+static int prefetch_worker_rr = 0;
+
+static void
+lr_do_prefetch(char* buf, int len)
+{
+	ParallelApplyWorkerInfo* winfo = prefetch_workers[prefetch_worker_rr++ % lr_perfetch_workers];
+	pa_send_data(winfo, len, buf);
+}
+
 /*
  * Apply main loop.
  */
@@ -3577,6 +3601,10 @@ LogicalRepApplyLoop(XLogRecPtr last_received)
 	bool		ping_sent = false;
 	TimeLineID	tli;
 	ErrorContextCallback errcallback;
+    char* prefetch_buf = NULL;
+	size_t prefetch_buf_pos = 0;
+	size_t prefetch_buf_used = 0;
+	size_t prefetch_buf_size = INIT_PREFETCH_BUF_SIZE;
 
 	/*
 	 * Init the ApplyMessageContext which we clean up after each replication
@@ -3593,6 +3621,24 @@ LogicalRepApplyLoop(XLogRecPtr last_received)
 	LogicalStreamingContext = AllocSetContextCreate(ApplyContext,
 													"LogicalStreamingContext",
 													ALLOCSET_DEFAULT_SIZES);
+
+	if (lr_prefetch_workers != 0)
+	{
+		for (int i = 0; i < lr_prefetch_workers; i++)
+		{
+			prefetch_worker[i] = pa_launch_parallel_worker();
+			if (!prefetch_worker[i])
+			{
+				elog(LOG, "Launch only %d prefetch worklers from %d",
+					 i, lr_prefetch_workers);
+				lr_prefetch_workers = i;
+				break;
+			}
+			prefetch_worker[i]->is_use = true;
+			prefetch_worker[i]->shared->do_prefetch = true;
+		}
+		prefetch_buffer = palloc(prefetch_buffer_size);
+	}
 
 	/* mark as idle, before starting to loop */
 	pgstat_report_activity(STATE_IDLE, NULL);
@@ -3611,7 +3657,7 @@ LogicalRepApplyLoop(XLogRecPtr last_received)
 	{
 		pgsocket	fd = PGINVALID_SOCKET;
 		int			rc;
-		int			len;
+		int32		len;
 		char	   *buf = NULL;
 		bool		endofstream = false;
 		long		wait_time;
@@ -3621,6 +3667,30 @@ LogicalRepApplyLoop(XLogRecPtr last_received)
 		MemoryContextSwitchTo(ApplyMessageContext);
 
 		len = walrcv_receive(LogRepWorkerWalRcvConn, &buf, &fd);
+
+		if (len > 0 && lr_prefetch_workers != 0)
+		{
+			while (len > 0)
+			{
+				if (prefetch_buf_used + len + 4 < prefetch_buf_size)
+				{
+					prefetch_buf_size *- 2;
+					prefetch_buf = prealloc(prefetch_buf, prefetch_buf_size);
+				}
+				memcpy(&prefetch_buf[prefetch_buf_used], &len, 4);
+				memcpy(&prefetch_buf[prefetch_buf_used+4], buf, len);
+				prefetch_buf_used += 4 + len;
+				len = walrcv_receive(LogRepWorkerWalRcvConn, &buf, &fd);
+			}
+			for (prefetch_buf_pos = 0; prefetch_buf_pos < prefetch_buf_used; prefetch_buf_pos += 4 + len)
+			{
+				memcpy(&len, &prefetch_buf[prefetch_buf_pos], 4);
+				lr_do_prefetch(&prefetch_buf[prefetch_buf_pos+4], len);
+			}
+			memcpy(&len, prefetch_buf, 4);
+			buf = &prefetch_buf[4];
+			prefetch_buf_pos = len + 4;
+		}
 
 		if (len != 0)
 		{
@@ -3702,8 +3772,23 @@ LogicalRepApplyLoop(XLogRecPtr last_received)
 
 					MemoryContextReset(ApplyMessageContext);
 				}
-
-				len = walrcv_receive(LogRepWorkerWalRcvConn, &buf, &fd);
+				if (lr_prefetch_workers != 0)
+				{
+					if (prefetch_buf_pos < prefetch_buf_used)
+					{
+						memcpy(&len, &prefetch_buf[prefetch_buf_pos], 4);
+						buf = &prefetch_buf[prefetch_buf_pos + 4];
+						prefetch_buf_pos += 4 + len;
+					}
+					else
+					{
+						len = 0;
+					}
+				}
+				else
+				{
+					len = walrcv_receive(LogRepWorkerWalRcvConn, &buf, &fd);
+				}
 			}
 		}
 

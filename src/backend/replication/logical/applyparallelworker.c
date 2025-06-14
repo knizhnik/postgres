@@ -400,7 +400,7 @@ pa_setup_dsm(ParallelApplyWorkerInfo *winfo)
  * Try to get a parallel apply worker from the pool. If none is available then
  * start a new one.
  */
-static ParallelApplyWorkerInfo *
+ParallelApplyWorkerInfo *
 pa_launch_parallel_worker(void)
 {
 	MemoryContext oldcontext;

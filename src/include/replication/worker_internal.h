@@ -180,6 +180,11 @@ typedef struct ParallelApplyWorkerShared
 	 */
 	PartialFileSetState fileset_state;
 	FileSet		fileset;
+
+	/*
+	 * Prefetch worker
+	 */
+	bool		do_prefetch;
 } ParallelApplyWorkerShared;
 
 /*

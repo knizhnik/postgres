@@ -3377,6 +3377,18 @@ struct config_int ConfigureNamesInt[] =
 	},
 
 	{
+		{"max_parallel_prefetch_workers_per_subscription",
+			PGC_SIGHUP,
+			REPLICATION_SUBSCRIBERS,
+			gettext_noop("Maximum number of parallel prefetch workers per subscription."),
+			NULL,
+		},
+		&max_parallel_prefetch_workers_per_subscription,
+		2, 0, MAX_LR_PREFETCH_WORKERS,
+		NULL, NULL, NULL
+	},
+
+	{
 		{"max_active_replication_origins",
 			PGC_POSTMASTER,
 			REPLICATION_SUBSCRIBERS,
