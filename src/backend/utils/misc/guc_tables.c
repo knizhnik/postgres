@@ -76,6 +76,7 @@
 #include "replication/slot.h"
 #include "replication/slotsync.h"
 #include "replication/syncrep.h"
+#include "replication/worker_internal.h"
 #include "storage/aio.h"
 #include "storage/bufmgr.h"
 #include "storage/bufpage.h"
@@ -2139,6 +2140,18 @@ struct config_bool ConfigureNamesBool[] =
 			gettext_noop("Enables vacuum to truncate empty pages at the end of the table."),
 		},
 		&vacuum_truncate,
+		true,
+		NULL, NULL, NULL
+	},
+
+	{
+		{"prefetch_replica_identity_only",
+			PGC_SIGHUP,
+			REPLICATION_SUBSCRIBERS,
+			gettext_noop("Whether LR prefetch work should prefetch only replica identity index or all other indexes too."),
+			NULL,
+		},
+		&prefetch_replica_identity_only,
 		true,
 		NULL, NULL, NULL
 	},

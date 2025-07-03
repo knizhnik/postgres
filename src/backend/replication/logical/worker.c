@@ -311,6 +311,18 @@ static uint32 parallel_stream_nchanges = 0;
 /* Are we initializing an apply worker? */
 bool		InitializingApplyWorker = false;
 
+#define INIT_PREFETCH_BUF_SIZE (64*1024)
+static ParallelApplyWorkerInfo* prefetch_worker[MAX_LR_PREFETCH_WORKERS];
+static int prefetch_worker_rr = 0;
+static int n_prefetch_workers;
+
+bool prefetch_replica_identity_only = true;
+
+size_t lr_prefetch_hits;
+size_t lr_prefetch_misses;
+size_t lr_prefetch_errors;
+size_t lr_prefetch_inserts;
+
 /*
  * We enable skipping all data modification changes (INSERT, UPDATE, etc.) for
  * the subscription if the remote transaction's finish LSN matches the subskiplsn.
@@ -328,6 +340,11 @@ bool		InitializingApplyWorker = false;
  */
 static XLogRecPtr skip_xact_finish_lsn = InvalidXLogRecPtr;
 #define is_skipping_changes() (unlikely(!XLogRecPtrIsInvalid(skip_xact_finish_lsn)))
+
+/*
+ * If operation is performed by parallel prefetch worker
+ */
+#define is_prefetching()	(am_parallel_apply_worker() && MyParallelShared->do_prefetch)
 
 /* BufFile handle of the current streaming file */
 static BufFile *stream_fd = NULL;
@@ -555,6 +572,11 @@ handle_streamed_transaction(LogicalRepMsgType action, StringInfo s)
 	ParallelApplyWorkerInfo *winfo;
 	TransApplyAction apply_action;
 	StringInfoData original_msg;
+
+	if (is_prefetching())
+	{
+		return false;
+	}
 
 	apply_action = get_transaction_apply_action(stream_xid, &winfo);
 
@@ -2487,13 +2509,35 @@ apply_handle_insert_internal(ApplyExecutionData *edata,
 		   !relinfo->ri_RelationDesc->rd_rel->relhasindex ||
 		   RelationGetIndexList(relinfo->ri_RelationDesc) == NIL);
 
-	/* Caller will not have done this bit. */
-	Assert(relinfo->ri_onConflictArbiterIndexes == NIL);
-	InitConflictIndexes(relinfo);
+	if (is_prefetching() && prefetch_replica_identity_only)
+	{
+		TupleTableSlot *localslot = NULL;
+		LogicalRepRelMapEntry *relmapentry = edata->targetRel;
+		Relation		localrel = relinfo->ri_RelationDesc;
+		EPQState		epqstate;
 
-	/* Do the insert. */
-	TargetPrivilegesCheck(relinfo->ri_RelationDesc, ACL_INSERT);
-	ExecSimpleRelationInsert(relinfo, estate, remoteslot);
+		EvalPlanQualInit(&epqstate, estate, NULL, NIL, -1, NIL);
+		ExecOpenIndices(relinfo, false);
+
+		(void)FindReplTupleInLocalRel(edata, localrel,
+									  &relmapentry->remoterel,
+									  relmapentry->localindexoid,
+									  remoteslot, &localslot);
+	}
+	else
+	{
+		/* Caller will not have done this bit. */
+		Assert(relinfo->ri_onConflictArbiterIndexes == NIL);
+		InitConflictIndexes(relinfo);
+
+		/* Do the insert. */
+		TargetPrivilegesCheck(relinfo->ri_RelationDesc, ACL_INSERT);
+		ExecSimpleRelationInsert(relinfo, estate, remoteslot);
+	}
+	if (is_prefetching())
+	{
+		lr_prefetch_inserts += 1;
+	}
 }
 
 /*
@@ -2682,6 +2726,16 @@ apply_handle_update_internal(ApplyExecutionData *edata,
 									localindexoid,
 									remoteslot, &localslot);
 
+	if (is_prefetching())
+	{
+		if (found)
+			lr_prefetch_hits += 1;
+		else
+			lr_prefetch_misses += 1;
+		if (prefetch_replica_identity_only)
+			goto Cleanup;
+	}
+
 	/*
 	 * Tuple found.
 	 *
@@ -2739,7 +2793,7 @@ apply_handle_update_internal(ApplyExecutionData *edata,
 							remoteslot, newslot, list_make1(&conflicttuple));
 	}
 
-	/* Cleanup. */
+  Cleanup:
 	ExecCloseIndices(relinfo);
 	EvalPlanQualEnd(&epqstate);
 }
@@ -2867,6 +2921,15 @@ apply_handle_delete_internal(ApplyExecutionData *edata,
 	found = FindReplTupleInLocalRel(edata, localrel, remoterel, localindexoid,
 									remoteslot, &localslot);
 
+	if (is_prefetching())
+	{
+		if (found)
+			lr_prefetch_hits += 1;
+		else
+			lr_prefetch_misses += 1;
+		goto Cleanup;
+	}
+
 	/* If found delete it. */
 	if (found)
 	{
@@ -2900,7 +2963,7 @@ apply_handle_delete_internal(ApplyExecutionData *edata,
 							remoteslot, NULL, list_make1(&conflicttuple));
 	}
 
-	/* Cleanup. */
+  Cleanup:
 	EvalPlanQualEnd(&epqstate);
 }
 
@@ -2920,6 +2983,8 @@ FindReplTupleInLocalRel(ApplyExecutionData *edata, Relation localrel,
 {
 	EState	   *estate = edata->estate;
 	bool		found;
+
+	LockTupleMode lockmode = is_prefetching() ? prefetch_replica_identity_only ? LockTupleNoLock : LockTupleTryExclusive : LockTupleExclusive;
 
 	/*
 	 * Regardless of the top-level operation, we're performing a read here, so
@@ -2946,11 +3011,11 @@ FindReplTupleInLocalRel(ApplyExecutionData *edata, Relation localrel,
 #endif
 
 		found = RelationFindReplTupleByIndex(localrel, localidxoid,
-											 LockTupleExclusive,
+											 lockmode,
 											 remoteslot, *localslot);
 	}
 	else
-		found = RelationFindReplTupleSeq(localrel, LockTupleExclusive,
+		found = RelationFindReplTupleSeq(localrel, lockmode,
 										 remoteslot, *localslot);
 
 	return found;
@@ -3076,6 +3141,9 @@ apply_handle_tuple_routing(ApplyExecutionData *edata,
 				{
 					TupleTableSlot *newslot = localslot;
 
+					if (is_prefetching())
+						return;
+
 					/* Store the new tuple for conflict reporting */
 					slot_store_data(newslot, part_entry, newtup);
 
@@ -3100,6 +3168,9 @@ apply_handle_tuple_routing(ApplyExecutionData *edata,
 					conflicttuple.origin != replorigin_session_origin)
 				{
 					TupleTableSlot *newslot;
+
+					if (is_prefetching())
+						return;
 
 					/* Store the new tuple for conflict reporting */
 					newslot = table_slot_create(partrel, &estate->es_tupleTable);
@@ -3370,21 +3441,6 @@ apply_dispatch(StringInfo s)
 	LogicalRepMsgType action = pq_getmsgbyte(s);
 	LogicalRepMsgType saved_command;
 
-	if (am_parallel_apply_worker() && MyParallelShared->do_prefetch)
-	{
-		switch (action)
-		{
-			case LOGICAL_REP_MSG_INSERT:
-			case LOGICAL_REP_MSG_UPDATE:
-			case LOGICAL_REP_MSG_DELETE:
-				pa_prefetch_handle_modification(s, action);
-				break;
-			default:
-				break;
-		}
-		return;
-	}
-
 	/*
 	 * Set the current command being applied. Since this function can be
 	 * called recursively when applying spooled changes, save the current
@@ -3581,14 +3637,40 @@ UpdateWorkerStats(XLogRecPtr last_lsn, TimestampTz send_time, bool reply)
 	}
 }
 
-static ParallelApplyWorkerInfo* prefetch_workers[MAX_LR_PREFETCH_WORKERS];
-static int prefetch_worker_rr = 0;
+#define MSG_CODE_OFFSET (1 + 8*3)
 
 static void
 lr_do_prefetch(char* buf, int len)
 {
-	ParallelApplyWorkerInfo* winfo = prefetch_workers[prefetch_worker_rr++ % lr_perfetch_workers];
-	pa_send_data(winfo, len, buf);
+	ParallelApplyWorkerInfo* winfo;
+
+	if (buf[0] != 'w')
+		return;
+
+	switch (buf[MSG_CODE_OFFSET])
+	{
+		case LOGICAL_REP_MSG_INSERT:
+		case LOGICAL_REP_MSG_UPDATE:
+		case LOGICAL_REP_MSG_DELETE:
+			/* Round robin prefetch worker */
+			winfo = prefetch_worker[prefetch_worker_rr++ % n_prefetch_workers];
+			pa_send_data(winfo, len, buf);
+			break;
+
+		case LOGICAL_REP_MSG_TYPE:
+		case LOGICAL_REP_MSG_RELATION:
+			/* broadcast to all prefetch workers */
+			for (int i = 0; i < n_prefetch_workers; i++)
+			{
+				winfo = prefetch_worker[i];
+				pa_send_data(winfo, len, buf);
+			}
+			break;
+
+		default:
+			/* Ignore other messages */
+			break;
+	}
 }
 
 /*
@@ -3622,22 +3704,23 @@ LogicalRepApplyLoop(XLogRecPtr last_received)
 													"LogicalStreamingContext",
 													ALLOCSET_DEFAULT_SIZES);
 
-	if (lr_prefetch_workers != 0)
+	if (max_parallel_prefetch_workers_per_subscription != 0)
 	{
-		for (int i = 0; i < lr_prefetch_workers; i++)
+		int i;
+		for (i = 0; i < max_parallel_prefetch_workers_per_subscription; i++)
 		{
 			prefetch_worker[i] = pa_launch_parallel_worker();
 			if (!prefetch_worker[i])
 			{
 				elog(LOG, "Launch only %d prefetch worklers from %d",
-					 i, lr_prefetch_workers);
-				lr_prefetch_workers = i;
+					 i, max_parallel_prefetch_workers_per_subscription);
 				break;
 			}
-			prefetch_worker[i]->is_use = true;
+			prefetch_worker[i]->in_use = true;
 			prefetch_worker[i]->shared->do_prefetch = true;
 		}
-		prefetch_buffer = palloc(prefetch_buffer_size);
+		n_prefetch_workers = i;
+		prefetch_buf = palloc(prefetch_buf_size);
 	}
 
 	/* mark as idle, before starting to loop */
@@ -3668,14 +3751,15 @@ LogicalRepApplyLoop(XLogRecPtr last_received)
 
 		len = walrcv_receive(LogRepWorkerWalRcvConn, &buf, &fd);
 
-		if (len > 0 && lr_prefetch_workers != 0)
+		if (len > 0 && n_prefetch_workers != 0)
 		{
+			prefetch_buf_used = 0;
 			while (len > 0)
 			{
-				if (prefetch_buf_used + len + 4 < prefetch_buf_size)
+				if (prefetch_buf_used + len + 4 > prefetch_buf_size)
 				{
-					prefetch_buf_size *- 2;
-					prefetch_buf = prealloc(prefetch_buf, prefetch_buf_size);
+					prefetch_buf_size *= 2;
+					prefetch_buf = repalloc(prefetch_buf, prefetch_buf_size);
 				}
 				memcpy(&prefetch_buf[prefetch_buf_used], &len, 4);
 				memcpy(&prefetch_buf[prefetch_buf_used+4], buf, len);
@@ -3772,7 +3856,7 @@ LogicalRepApplyLoop(XLogRecPtr last_received)
 
 					MemoryContextReset(ApplyMessageContext);
 				}
-				if (lr_prefetch_workers != 0)
+				if (n_prefetch_workers != 0)
 				{
 					if (prefetch_buf_pos < prefetch_buf_used)
 					{

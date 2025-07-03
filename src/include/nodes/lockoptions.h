@@ -56,6 +56,10 @@ typedef enum LockTupleMode
 	LockTupleNoKeyExclusive,
 	/* SELECT FOR UPDATE, UPDATEs that modify key columns, and DELETE */
 	LockTupleExclusive,
+	/* Do not lock tuple */
+	LockTupleNoLock,
+	/* Try explusive lock, silent give up in case of conflict */
+	LockTupleTryExclusive,
 } LockTupleMode;
 
 #endif							/* LOCKOPTIONS_H */
