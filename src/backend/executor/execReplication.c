@@ -131,7 +131,7 @@ build_replindex_scan_key(ScanKey skey, Relation rel, Relation idxrel,
  * invoking table_tuple_lock.
  */
 static bool
-should_refetch_tuple(TM_Result res, TM_FailureData *tmfd)
+should_refetch_tuple(TM_Result res, TM_FailureData *tmfd, LockTupleMode lockmode)
 {
 	bool		refetch = false;
 
@@ -141,22 +141,28 @@ should_refetch_tuple(TM_Result res, TM_FailureData *tmfd)
 			break;
 		case TM_Updated:
 			/* XXX: Improve handling here */
-			if (ItemPointerIndicatesMovedPartitions(&tmfd->ctid))
-				ereport(LOG,
-						(errcode(ERRCODE_T_R_SERIALIZATION_FAILURE),
-						 errmsg("tuple to be locked was already moved to another partition due to concurrent update, retrying")));
-			else
-				ereport(LOG,
-						(errcode(ERRCODE_T_R_SERIALIZATION_FAILURE),
-						 errmsg("concurrent update, retrying")));
-			refetch = true;
+			if (lockmode != LockTupleTryExclusive)
+			{
+				if (ItemPointerIndicatesMovedPartitions(&tmfd->ctid))
+					ereport(LOG,
+							(errcode(ERRCODE_T_R_SERIALIZATION_FAILURE),
+							 errmsg("tuple to be locked was already moved to another partition due to concurrent update, retrying")));
+				else
+					ereport(LOG,
+							(errcode(ERRCODE_T_R_SERIALIZATION_FAILURE),
+							 errmsg("concurrent update, retrying")));
+				refetch = true;
+			}
 			break;
 		case TM_Deleted:
-			/* XXX: Improve handling here */
-			ereport(LOG,
-					(errcode(ERRCODE_T_R_SERIALIZATION_FAILURE),
-					 errmsg("concurrent delete, retrying")));
-			refetch = true;
+			if (lockmode != LockTupleTryExclusive)
+			{
+				/* XXX: Improve handling here */
+				ereport(LOG,
+						(errcode(ERRCODE_T_R_SERIALIZATION_FAILURE),
+						 errmsg("concurrent delete, retrying")));
+				refetch = true;
+			}
 			break;
 		case TM_Invisible:
 			elog(ERROR, "attempted to lock invisible tuple");
@@ -236,8 +242,16 @@ retry:
 		 */
 		if (TransactionIdIsValid(xwait))
 		{
-			XactLockTableWait(xwait, NULL, NULL, XLTW_None);
-			goto retry;
+			if (lockmode == LockTupleTryExclusive)
+			{
+				found = false;
+				break;
+			}
+			else if (lockmode != LockTupleNoLock)
+			{
+				XactLockTableWait(xwait, NULL, NULL, XLTW_None);
+				goto retry;
+			}
 		}
 
 		/* Found our tuple and it's not locked */
@@ -246,7 +260,7 @@ retry:
 	}
 
 	/* Found tuple, try to lock it in the lockmode. */
-	if (found)
+	if (found && lockmode != LockTupleNoLock)
 	{
 		TM_FailureData tmfd;
 		TM_Result	res;
@@ -256,14 +270,14 @@ retry:
 		res = table_tuple_lock(rel, &(outslot->tts_tid), GetActiveSnapshot(),
 							   outslot,
 							   GetCurrentCommandId(false),
-							   lockmode,
+							   lockmode == LockTupleTryExclusive ? LockTupleExclusive : lockmode,
 							   LockWaitBlock,
 							   0 /* don't follow updates */ ,
 							   &tmfd);
 
 		PopActiveSnapshot();
 
-		if (should_refetch_tuple(res, &tmfd))
+		if (should_refetch_tuple(res, &tmfd, lockmode))
 			goto retry;
 	}
 
@@ -395,16 +409,23 @@ retry:
 		 */
 		if (TransactionIdIsValid(xwait))
 		{
-			XactLockTableWait(xwait, NULL, NULL, XLTW_None);
-			goto retry;
+			if (lockmode == LockTupleTryExclusive)
+			{
+				found = false;
+				break;
+			}
+			else if (lockmode != LockTupleNoLock)
+			{
+				XactLockTableWait(xwait, NULL, NULL, XLTW_None);
+				goto retry;
+			}
 		}
-
 		/* Found our tuple and it's not locked */
 		break;
 	}
 
 	/* Found tuple, try to lock it in the lockmode. */
-	if (found)
+	if (found && lockmode != LockTupleNoLock)
 	{
 		TM_FailureData tmfd;
 		TM_Result	res;
@@ -414,14 +435,14 @@ retry:
 		res = table_tuple_lock(rel, &(outslot->tts_tid), GetActiveSnapshot(),
 							   outslot,
 							   GetCurrentCommandId(false),
-							   lockmode,
+							   lockmode == LockTupleTryExclusive ? LockTupleExclusive : lockmode,
 							   LockWaitBlock,
 							   0 /* don't follow updates */ ,
 							   &tmfd);
 
 		PopActiveSnapshot();
 
-		if (should_refetch_tuple(res, &tmfd))
+		if (should_refetch_tuple(res, &tmfd, lockmode))
 			goto retry;
 	}
 
@@ -508,7 +529,7 @@ retry:
 
 	PopActiveSnapshot();
 
-	if (should_refetch_tuple(res, &tmfd))
+	if (should_refetch_tuple(res, &tmfd, LockTupleShare))
 		goto retry;
 
 	return true;

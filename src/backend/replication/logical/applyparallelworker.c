@@ -729,6 +729,40 @@ ProcessParallelApplyInterrupts(void)
 	}
 }
 
+
+static void
+pa_apply_dispatch(StringInfo s)
+{
+	if (MyParallelShared->do_prefetch)
+	{
+		PG_TRY();
+		{
+			apply_dispatch(s);
+		}
+		PG_CATCH();
+		{
+			elog(DEBUG1, "Failed to prefetch LR operation");
+
+			HOLD_INTERRUPTS();
+
+			/* TODO: should we somehow dump the error or just silently ignore it? */
+			/* EmitErrorReport(); */
+			FlushErrorState();
+
+			RESUME_INTERRUPTS();
+
+			lr_prefetch_errors += 1;
+		}
+		PG_END_TRY();
+		/* We need to abort transaction to undo insert */
+		AbortCurrentTransaction();
+	}
+	else
+	{
+		apply_dispatch(s);
+	}
+}
+
 /* Parallel apply worker main loop. */
 static void
 LogicalParallelApplyLoop(shm_mq_handle *mqh)
@@ -794,7 +828,7 @@ LogicalParallelApplyLoop(shm_mq_handle *mqh)
 			 */
 			s.cursor += SIZE_STATS_MESSAGE;
 
-			apply_dispatch(&s);
+			pa_apply_dispatch(&s);
 		}
 		else if (shmq_res == SHM_MQ_WOULD_BLOCK)
 		{
@@ -943,20 +977,22 @@ ParallelApplyWorkerMain(Datum main_arg)
 
 	InitializingApplyWorker = false;
 
-	/* Setup replication origin tracking. */
-	StartTransactionCommand();
-	ReplicationOriginNameForLogicalRep(MySubscription->oid, InvalidOid,
+	if (!MyParallelShared->do_prefetch)
+	{
+		/* Setup replication origin tracking. */
+		StartTransactionCommand();
+		ReplicationOriginNameForLogicalRep(MySubscription->oid, InvalidOid,
 									   originname, sizeof(originname));
-	originid = replorigin_by_name(originname, false);
+		originid = replorigin_by_name(originname, false);
 
-	/*
-	 * The parallel apply worker doesn't need to monopolize this replication
-	 * origin which was already acquired by its leader process.
-	 */
-	replorigin_session_setup(originid, MyLogicalRepWorker->leader_pid);
-	replorigin_session_origin = originid;
-	CommitTransactionCommand();
-
+		/*
+		 * The parallel apply worker doesn't need to monopolize this replication
+		 * origin which was already acquired by its leader process.
+		 */
+		replorigin_session_setup(originid, MyLogicalRepWorker->leader_pid);
+		replorigin_session_origin = originid;
+		CommitTransactionCommand();
+	}
 	/*
 	 * Setup callback for syscache so that we know when something changes in
 	 * the subscription relation state.
@@ -1149,8 +1185,11 @@ pa_send_data(ParallelApplyWorkerInfo *winfo, Size nbytes, const void *data)
 	shm_mq_result result;
 	TimestampTz startTime = 0;
 
-	Assert(!IsTransactionState());
-	Assert(!winfo->serialize_changes);
+	if (!winfo->shared->do_prefetch)
+	{
+		Assert(!IsTransactionState());
+		Assert(!winfo->serialize_changes);
+	}
 
 	/*
 	 * We don't try to send data to parallel worker for 'immediate' mode. This
