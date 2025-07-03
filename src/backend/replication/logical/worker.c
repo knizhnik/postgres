@@ -3683,7 +3683,7 @@ LogicalRepApplyLoop(XLogRecPtr last_received)
 	bool		ping_sent = false;
 	TimeLineID	tli;
 	ErrorContextCallback errcallback;
-    char* prefetch_buf = NULL;
+	char* prefetch_buf = NULL;
 	size_t prefetch_buf_pos = 0;
 	size_t prefetch_buf_used = 0;
 	size_t prefetch_buf_size = INIT_PREFETCH_BUF_SIZE;
