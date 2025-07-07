@@ -3785,7 +3785,7 @@ LogicalRepApplyLoop(XLogRecPtr last_received)
 					if (prefetch_buf_used + len + 4 > prefetch_buf_size)
 					{
 						prefetch_buf_size *= 2;
-						elog(DEUG1, "Increase prefetch buffer size to %ld", prefetch_buf_size);
+						elog(DEBUG1, "Increase prefetch buffer size to %ld", prefetch_buf_size);
 						prefetch_buf = repalloc(prefetch_buf, prefetch_buf_size);
 					}
 					memcpy(&prefetch_buf[prefetch_buf_used], &len, 4);
