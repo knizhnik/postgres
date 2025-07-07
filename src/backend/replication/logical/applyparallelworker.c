@@ -741,9 +741,9 @@ pa_apply_dispatch(StringInfo s)
 		}
 		PG_CATCH();
 		{
-			elog(DEBUG1, "Failed to prefetch LR operation");
-
 			HOLD_INTERRUPTS();
+
+			elog(DEBUG1, "Failed to prefetch LR operation");
 
 			/* TODO: should we somehow dump the error or just silently ignore it? */
 			/* EmitErrorReport(); */
@@ -754,8 +754,11 @@ pa_apply_dispatch(StringInfo s)
 			lr_prefetch_errors += 1;
 		}
 		PG_END_TRY();
-		/* We need to abort transaction to undo insert */
-		AbortCurrentTransaction();
+		if (!prefetch_replica_identity_only)
+		{
+			/* We need to abort transaction to undo insert */
+			AbortCurrentTransaction();
+		}
 	}
 	else
 	{
@@ -992,6 +995,11 @@ ParallelApplyWorkerMain(Datum main_arg)
 		replorigin_session_setup(originid, MyLogicalRepWorker->leader_pid);
 		replorigin_session_origin = originid;
 		CommitTransactionCommand();
+	}
+	else
+	{
+		/* Do not write WAL for prefetch */
+		wal_level = WAL_LEVEL_MINIMAL;
 	}
 	/*
 	 * Setup callback for syscache so that we know when something changes in

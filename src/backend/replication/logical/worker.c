@@ -311,7 +311,7 @@ static uint32 parallel_stream_nchanges = 0;
 /* Are we initializing an apply worker? */
 bool		InitializingApplyWorker = false;
 
-#define INIT_PREFETCH_BUF_SIZE (64*1024)
+#define INIT_PREFETCH_BUF_SIZE (128*1024)
 static ParallelApplyWorkerInfo* prefetch_worker[MAX_LR_PREFETCH_WORKERS];
 static int prefetch_worker_rr = 0;
 static int n_prefetch_workers;
@@ -2402,6 +2402,27 @@ TargetPrivilegesCheck(Relation rel, AclMode mode)
 						RelationGetRelationName(rel))));
 }
 
+#define SAFE_APPLY(call)									\
+	if (is_prefetching())									\
+	{														\
+		PG_TRY();											\
+		{													\
+			call;											\
+		}													\
+		PG_CATCH();											\
+		{													\
+			HOLD_INTERRUPTS();								\
+			elog(DEBUG1, "Failed to prefetch LR operation");\
+			FlushErrorState();								\
+			RESUME_INTERRUPTS();							\
+			lr_prefetch_errors += 1;						\
+		}													\
+		PG_END_TRY();										\
+	} else {												\
+		call;												\
+	}
+
+
 /*
  * Handle INSERT message.
  */
@@ -2475,7 +2496,7 @@ apply_handle_insert(StringInfo s)
 		ResultRelInfo *relinfo = edata->targetRelInfo;
 
 		ExecOpenIndices(relinfo, false);
-		apply_handle_insert_internal(edata, relinfo, remoteslot);
+		SAFE_APPLY(apply_handle_insert_internal(edata, relinfo, remoteslot));
 		ExecCloseIndices(relinfo);
 	}
 
@@ -2517,7 +2538,6 @@ apply_handle_insert_internal(ApplyExecutionData *edata,
 		EPQState		epqstate;
 
 		EvalPlanQualInit(&epqstate, estate, NULL, NIL, -1, NIL);
-		ExecOpenIndices(relinfo, false);
 
 		(void)FindReplTupleInLocalRel(edata, localrel,
 									  &relmapentry->remoterel,
@@ -2681,8 +2701,8 @@ apply_handle_update(StringInfo s)
 		apply_handle_tuple_routing(edata,
 								   remoteslot, &newtup, CMD_UPDATE);
 	else
-		apply_handle_update_internal(edata, edata->targetRelInfo,
-									 remoteslot, &newtup, rel->localindexoid);
+		SAFE_APPLY(apply_handle_update_internal(edata, edata->targetRelInfo,
+												remoteslot, &newtup, rel->localindexoid));
 
 	finish_edata(edata);
 
@@ -2874,8 +2894,8 @@ apply_handle_delete(StringInfo s)
 		ResultRelInfo *relinfo = edata->targetRelInfo;
 
 		ExecOpenIndices(relinfo, false);
-		apply_handle_delete_internal(edata, relinfo,
-									 remoteslot, rel->localindexoid);
+		SAFE_APPLY(apply_handle_delete_internal(edata, relinfo,
+												remoteslot, rel->localindexoid));
 		ExecCloseIndices(relinfo);
 	}
 
@@ -3106,14 +3126,14 @@ apply_handle_tuple_routing(ApplyExecutionData *edata,
 	switch (operation)
 	{
 		case CMD_INSERT:
-			apply_handle_insert_internal(edata, partrelinfo,
-										 remoteslot_part);
+			SAFE_APPLY(apply_handle_insert_internal(edata, partrelinfo,
+													remoteslot_part));
 			break;
 
 		case CMD_DELETE:
-			apply_handle_delete_internal(edata, partrelinfo,
-										 remoteslot_part,
-										 part_entry->localindexoid);
+			SAFE_APPLY(apply_handle_delete_internal(edata, partrelinfo,
+													remoteslot_part,
+													part_entry->localindexoid));
 			break;
 
 		case CMD_UPDATE:
@@ -3288,8 +3308,8 @@ apply_handle_tuple_routing(ApplyExecutionData *edata,
 						slot_getallattrs(remoteslot);
 					}
 					MemoryContextSwitchTo(oldctx);
-					apply_handle_insert_internal(edata, partrelinfo_new,
-												 remoteslot_part);
+					SAFE_APPLY(apply_handle_insert_internal(edata, partrelinfo_new,
+															remoteslot_part));
 				}
 
 				EvalPlanQualEnd(&epqstate);
@@ -3743,6 +3763,7 @@ LogicalRepApplyLoop(XLogRecPtr last_received)
 		int32		len;
 		char	   *buf = NULL;
 		bool		endofstream = false;
+		bool		no_more_data = false;
 		long		wait_time;
 
 		CHECK_FOR_INTERRUPTS();
@@ -3751,128 +3772,128 @@ LogicalRepApplyLoop(XLogRecPtr last_received)
 
 		len = walrcv_receive(LogRepWorkerWalRcvConn, &buf, &fd);
 
-		if (len > 0 && n_prefetch_workers != 0)
+		/* Loop to process all available data (without blocking). */
+		for (;;)
 		{
-			prefetch_buf_used = 0;
-			while (len > 0)
+			CHECK_FOR_INTERRUPTS();
+
+			if (len > 0 && n_prefetch_workers != 0 && prefetch_buf_pos == prefetch_buf_used)
 			{
-				if (prefetch_buf_used + len + 4 > prefetch_buf_size)
+				prefetch_buf_used = 0;
+				do
 				{
-					prefetch_buf_size *= 2;
-					prefetch_buf = repalloc(prefetch_buf, prefetch_buf_size);
+					if (prefetch_buf_used + len + 4 > prefetch_buf_size)
+					{
+						prefetch_buf_size *= 2;
+						elog(DEUG1, "Increase prefetch buffer size to %ld", prefetch_buf_size);
+						prefetch_buf = repalloc(prefetch_buf, prefetch_buf_size);
+					}
+					memcpy(&prefetch_buf[prefetch_buf_used], &len, 4);
+					memcpy(&prefetch_buf[prefetch_buf_used+4], buf, len);
+					prefetch_buf_used += 4 + len;
+					if (prefetch_buf_used >= INIT_PREFETCH_BUF_SIZE)
+						break;
+					len = walrcv_receive(LogRepWorkerWalRcvConn, &buf, &fd);
+				} while (len > 0);
+
+				no_more_data = len <= 0;
+
+				for (prefetch_buf_pos = 0; prefetch_buf_pos < prefetch_buf_used; prefetch_buf_pos += 4 + len)
+				{
+					memcpy(&len, &prefetch_buf[prefetch_buf_pos], 4);
+					lr_do_prefetch(&prefetch_buf[prefetch_buf_pos+4], len);
 				}
-				memcpy(&prefetch_buf[prefetch_buf_used], &len, 4);
-				memcpy(&prefetch_buf[prefetch_buf_used+4], buf, len);
-				prefetch_buf_used += 4 + len;
-				len = walrcv_receive(LogRepWorkerWalRcvConn, &buf, &fd);
+				memcpy(&len, prefetch_buf, 4);
+				buf = &prefetch_buf[4];
+				prefetch_buf_pos = len + 4;
 			}
-			for (prefetch_buf_pos = 0; prefetch_buf_pos < prefetch_buf_used; prefetch_buf_pos += 4 + len)
+
+			if (len == 0)
+			{
+				break;
+			}
+			else if (len < 0)
+			{
+				ereport(LOG,
+						(errmsg("data stream from publisher has ended")));
+				endofstream = true;
+				break;
+			}
+			else
+			{
+				int			c;
+				StringInfoData s;
+
+				if (ConfigReloadPending)
+				{
+					ConfigReloadPending = false;
+					ProcessConfigFile(PGC_SIGHUP);
+				}
+
+				/* Reset timeout. */
+				last_recv_timestamp = GetCurrentTimestamp();
+				ping_sent = false;
+
+				/* Ensure we are reading the data into our memory context. */
+				MemoryContextSwitchTo(ApplyMessageContext);
+
+				initReadOnlyStringInfo(&s, buf, len);
+
+				c = pq_getmsgbyte(&s);
+
+				if (c == 'w')
+				{
+					XLogRecPtr	start_lsn;
+					XLogRecPtr	end_lsn;
+					TimestampTz send_time;
+
+					start_lsn = pq_getmsgint64(&s);
+					end_lsn = pq_getmsgint64(&s);
+					send_time = pq_getmsgint64(&s);
+
+					if (last_received < start_lsn)
+						last_received = start_lsn;
+
+					if (last_received < end_lsn)
+						last_received = end_lsn;
+
+					UpdateWorkerStats(last_received, send_time, false);
+
+					apply_dispatch(&s);
+				}
+				else if (c == 'k')
+				{
+					XLogRecPtr	end_lsn;
+					TimestampTz timestamp;
+					bool		reply_requested;
+
+					end_lsn = pq_getmsgint64(&s);
+					timestamp = pq_getmsgint64(&s);
+					reply_requested = pq_getmsgbyte(&s);
+
+					if (last_received < end_lsn)
+						last_received = end_lsn;
+
+					send_feedback(last_received, reply_requested, false);
+					UpdateWorkerStats(last_received, timestamp, true);
+				}
+				/* other message types are purposefully ignored */
+
+				MemoryContextReset(ApplyMessageContext);
+			}
+			if (prefetch_buf_pos < prefetch_buf_used)
 			{
 				memcpy(&len, &prefetch_buf[prefetch_buf_pos], 4);
-				lr_do_prefetch(&prefetch_buf[prefetch_buf_pos+4], len);
+				buf = &prefetch_buf[prefetch_buf_pos + 4];
+				prefetch_buf_pos += 4 + len;
 			}
-			memcpy(&len, prefetch_buf, 4);
-			buf = &prefetch_buf[4];
-			prefetch_buf_pos = len + 4;
-		}
-
-		if (len != 0)
-		{
-			/* Loop to process all available data (without blocking). */
-			for (;;)
+			else if (prefetch_buf_used != 0 && no_more_data)
 			{
-				CHECK_FOR_INTERRUPTS();
-
-				if (len == 0)
-				{
-					break;
-				}
-				else if (len < 0)
-				{
-					ereport(LOG,
-							(errmsg("data stream from publisher has ended")));
-					endofstream = true;
-					break;
-				}
-				else
-				{
-					int			c;
-					StringInfoData s;
-
-					if (ConfigReloadPending)
-					{
-						ConfigReloadPending = false;
-						ProcessConfigFile(PGC_SIGHUP);
-					}
-
-					/* Reset timeout. */
-					last_recv_timestamp = GetCurrentTimestamp();
-					ping_sent = false;
-
-					/* Ensure we are reading the data into our memory context. */
-					MemoryContextSwitchTo(ApplyMessageContext);
-
-					initReadOnlyStringInfo(&s, buf, len);
-
-					c = pq_getmsgbyte(&s);
-
-					if (c == 'w')
-					{
-						XLogRecPtr	start_lsn;
-						XLogRecPtr	end_lsn;
-						TimestampTz send_time;
-
-						start_lsn = pq_getmsgint64(&s);
-						end_lsn = pq_getmsgint64(&s);
-						send_time = pq_getmsgint64(&s);
-
-						if (last_received < start_lsn)
-							last_received = start_lsn;
-
-						if (last_received < end_lsn)
-							last_received = end_lsn;
-
-						UpdateWorkerStats(last_received, send_time, false);
-
-						apply_dispatch(&s);
-					}
-					else if (c == 'k')
-					{
-						XLogRecPtr	end_lsn;
-						TimestampTz timestamp;
-						bool		reply_requested;
-
-						end_lsn = pq_getmsgint64(&s);
-						timestamp = pq_getmsgint64(&s);
-						reply_requested = pq_getmsgbyte(&s);
-
-						if (last_received < end_lsn)
-							last_received = end_lsn;
-
-						send_feedback(last_received, reply_requested, false);
-						UpdateWorkerStats(last_received, timestamp, true);
-					}
-					/* other message types are purposefully ignored */
-
-					MemoryContextReset(ApplyMessageContext);
-				}
-				if (n_prefetch_workers != 0)
-				{
-					if (prefetch_buf_pos < prefetch_buf_used)
-					{
-						memcpy(&len, &prefetch_buf[prefetch_buf_pos], 4);
-						buf = &prefetch_buf[prefetch_buf_pos + 4];
-						prefetch_buf_pos += 4 + len;
-					}
-					else
-					{
-						len = 0;
-					}
-				}
-				else
-				{
-					len = walrcv_receive(LogRepWorkerWalRcvConn, &buf, &fd);
-				}
+				break;
+			}
+			else
+			{
+				len = walrcv_receive(LogRepWorkerWalRcvConn, &buf, &fd);
 			}
 		}
 
