@@ -2552,7 +2552,7 @@ apply_handle_insert_internal(ApplyExecutionData *edata,
 
 		/* Do the insert. */
 		TargetPrivilegesCheck(relinfo->ri_RelationDesc, ACL_INSERT);
-		ExecSimpleRelationInsert(relinfo, estate, remoteslot);
+		ExecSimpleRelationInsert(relinfo, estate, remoteslot, is_prefetching());
 	}
 	if (is_prefetching())
 	{
@@ -2796,7 +2796,7 @@ apply_handle_update_internal(ApplyExecutionData *edata,
 		/* Do the actual update. */
 		TargetPrivilegesCheck(relinfo->ri_RelationDesc, ACL_UPDATE);
 		ExecSimpleRelationUpdate(relinfo, estate, &epqstate, localslot,
-								 remoteslot);
+								 remoteslot, is_prefetching());
 	}
 	else
 	{
@@ -3235,7 +3235,7 @@ apply_handle_tuple_routing(ApplyExecutionData *edata,
 					TargetPrivilegesCheck(partrelinfo->ri_RelationDesc,
 										  ACL_UPDATE);
 					ExecSimpleRelationUpdate(partrelinfo, estate, &epqstate,
-											 localslot, remoteslot_part);
+											 localslot, remoteslot_part, is_prefetching());
 				}
 				else
 				{
@@ -3732,7 +3732,7 @@ LogicalRepApplyLoop(XLogRecPtr last_received)
 			prefetch_worker[i] = pa_launch_parallel_worker();
 			if (!prefetch_worker[i])
 			{
-				elog(LOG, "Launch only %d prefetch worklers from %d",
+				elog(LOG, "Launch only %d prefetch workers from %d",
 					 i, max_parallel_prefetch_workers_per_subscription);
 				break;
 			}

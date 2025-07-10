@@ -581,7 +581,7 @@ CheckAndReportConflict(ResultRelInfo *resultRelInfo, EState *estate,
  */
 void
 ExecSimpleRelationInsert(ResultRelInfo *resultRelInfo,
-						 EState *estate, TupleTableSlot *slot)
+						 EState *estate, TupleTableSlot *slot, bool prefetch)
 {
 	bool		skip_tuple = false;
 	Relation	rel = resultRelInfo->ri_RelationDesc;
@@ -625,7 +625,7 @@ ExecSimpleRelationInsert(ResultRelInfo *resultRelInfo,
 		if (resultRelInfo->ri_NumIndices > 0)
 			recheckIndexes = ExecInsertIndexTuples(resultRelInfo,
 												   slot, estate, false,
-												   conflictindexes ? true : false,
+												   conflictindexes || prefetch ? true : false,
 												   &conflict,
 												   conflictindexes, false);
 
@@ -644,7 +644,7 @@ ExecSimpleRelationInsert(ResultRelInfo *resultRelInfo,
 		 * be a frequent thing so we preferred to save the performance
 		 * overhead of extra scan before each insertion.
 		 */
-		if (conflict)
+		if (conflict && !prefetch)
 			CheckAndReportConflict(resultRelInfo, estate, CT_INSERT_EXISTS,
 								   recheckIndexes, NULL, slot);
 
@@ -671,7 +671,7 @@ ExecSimpleRelationInsert(ResultRelInfo *resultRelInfo,
 void
 ExecSimpleRelationUpdate(ResultRelInfo *resultRelInfo,
 						 EState *estate, EPQState *epqstate,
-						 TupleTableSlot *searchslot, TupleTableSlot *slot)
+						 TupleTableSlot *searchslot, TupleTableSlot *slot, bool prefetch)
 {
 	bool		skip_tuple = false;
 	Relation	rel = resultRelInfo->ri_RelationDesc;
@@ -722,7 +722,7 @@ ExecSimpleRelationUpdate(ResultRelInfo *resultRelInfo,
 		if (resultRelInfo->ri_NumIndices > 0 && (update_indexes != TU_None))
 			recheckIndexes = ExecInsertIndexTuples(resultRelInfo,
 												   slot, estate, true,
-												   conflictindexes ? true : false,
+												   conflictindexes || prefetch ? true : false,
 												   &conflict, conflictindexes,
 												   (update_indexes == TU_Summarizing));
 
@@ -731,7 +731,7 @@ ExecSimpleRelationUpdate(ResultRelInfo *resultRelInfo,
 		 * ExecSimpleRelationInsert to understand why this check is done at
 		 * this point.
 		 */
-		if (conflict)
+		if (conflict && !prefetch)
 			CheckAndReportConflict(resultRelInfo, estate, CT_UPDATE_EXISTS,
 								   recheckIndexes, searchslot, slot);
 
