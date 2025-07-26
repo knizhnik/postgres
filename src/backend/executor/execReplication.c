@@ -131,7 +131,7 @@ build_replindex_scan_key(ScanKey skey, Relation rel, Relation idxrel,
  * invoking table_tuple_lock.
  */
 static bool
-should_refetch_tuple(TM_Result res, TM_FailureData *tmfd, LockTupleMode lockmode)
+should_refetch_tuple(TM_Result res, TM_FailureData *tmfd)
 {
 	bool		refetch = false;
 
@@ -141,28 +141,22 @@ should_refetch_tuple(TM_Result res, TM_FailureData *tmfd, LockTupleMode lockmode
 			break;
 		case TM_Updated:
 			/* XXX: Improve handling here */
-			if (lockmode != LockTupleTryExclusive)
-			{
-				if (ItemPointerIndicatesMovedPartitions(&tmfd->ctid))
-					ereport(LOG,
-							(errcode(ERRCODE_T_R_SERIALIZATION_FAILURE),
-							 errmsg("tuple to be locked was already moved to another partition due to concurrent update, retrying")));
-				else
-					ereport(LOG,
-							(errcode(ERRCODE_T_R_SERIALIZATION_FAILURE),
-							 errmsg("concurrent update, retrying")));
-				refetch = true;
-			}
-			break;
-		case TM_Deleted:
-			if (lockmode != LockTupleTryExclusive)
-			{
-				/* XXX: Improve handling here */
+			if (ItemPointerIndicatesMovedPartitions(&tmfd->ctid))
 				ereport(LOG,
 						(errcode(ERRCODE_T_R_SERIALIZATION_FAILURE),
-						 errmsg("concurrent delete, retrying")));
-				refetch = true;
-			}
+						 errmsg("tuple to be locked was already moved to another partition due to concurrent update, retrying")));
+			else
+				ereport(LOG,
+						(errcode(ERRCODE_T_R_SERIALIZATION_FAILURE),
+						 errmsg("concurrent update, retrying")));
+			refetch = true;
+			break;
+		case TM_Deleted:
+			/* XXX: Improve handling here */
+			ereport(LOG,
+					(errcode(ERRCODE_T_R_SERIALIZATION_FAILURE),
+					 errmsg("concurrent delete, retrying")));
+			refetch = true;
 			break;
 		case TM_Invisible:
 			elog(ERROR, "attempted to lock invisible tuple");
@@ -242,16 +236,8 @@ retry:
 		 */
 		if (TransactionIdIsValid(xwait))
 		{
-			if (lockmode == LockTupleTryExclusive)
-			{
-				found = false;
-				break;
-			}
-			else if (lockmode != LockTupleNoLock)
-			{
-				XactLockTableWait(xwait, NULL, NULL, XLTW_None);
-				goto retry;
-			}
+			XactLockTableWait(xwait, NULL, NULL, XLTW_None);
+			goto retry;
 		}
 
 		/* Found our tuple and it's not locked */
@@ -260,7 +246,7 @@ retry:
 	}
 
 	/* Found tuple, try to lock it in the lockmode. */
-	if (found && lockmode != LockTupleNoLock)
+	if (found)
 	{
 		TM_FailureData tmfd;
 		TM_Result	res;
@@ -270,14 +256,14 @@ retry:
 		res = table_tuple_lock(rel, &(outslot->tts_tid), GetActiveSnapshot(),
 							   outslot,
 							   GetCurrentCommandId(false),
-							   lockmode == LockTupleTryExclusive ? LockTupleExclusive : lockmode,
+							   lockmode,
 							   LockWaitBlock,
 							   0 /* don't follow updates */ ,
 							   &tmfd);
 
 		PopActiveSnapshot();
 
-		if (should_refetch_tuple(res, &tmfd, lockmode))
+		if (should_refetch_tuple(res, &tmfd))
 			goto retry;
 	}
 
@@ -285,6 +271,47 @@ retry:
 
 	/* Don't release lock until commit. */
 	index_close(idxrel, NoLock);
+
+	return found;
+}
+
+/*
+ * Search the relation 'rel' for tuple using the index.
+ * Returns true if tuple is found.
+ */
+bool
+RelationPrefetchIndex(Relation rel, Oid idxoid, TupleTableSlot *searchslot,
+					  TupleTableSlot *outslot)
+{
+	ScanKeyData skey[INDEX_MAX_KEYS];
+	int			skey_attoff;
+	IndexScanDesc scan;
+	SnapshotData snap;
+	Relation	idxrel;
+	bool		found;
+
+	/* Do not do prefetch when there is no index */
+	if (!OidIsValid(idxoid))
+		return false;
+
+	/* Open the index. */
+	idxrel = index_open(idxoid, AccessShareLock);
+
+	InitDirtySnapshot(snap);
+
+	/* Build scan key. */
+	skey_attoff = build_replindex_scan_key(skey, rel, idxrel, searchslot);
+
+	/* Start an index scan. */
+	scan = index_beginscan(rel, idxrel, &snap, NULL, skey_attoff, 0);
+	index_rescan(scan, skey, skey_attoff, NULL, 0);
+
+	/* Try to find the tuple */
+	found = index_getnext_slot(scan, ForwardScanDirection, outslot);
+
+	/* Cleanup */
+	index_endscan(scan);
+	index_close(idxrel, AccessShareLock);
 
 	return found;
 }
@@ -409,23 +436,16 @@ retry:
 		 */
 		if (TransactionIdIsValid(xwait))
 		{
-			if (lockmode == LockTupleTryExclusive)
-			{
-				found = false;
-				break;
-			}
-			else if (lockmode != LockTupleNoLock)
-			{
-				XactLockTableWait(xwait, NULL, NULL, XLTW_None);
-				goto retry;
-			}
+			XactLockTableWait(xwait, NULL, NULL, XLTW_None);
+			goto retry;
 		}
+
 		/* Found our tuple and it's not locked */
 		break;
 	}
 
 	/* Found tuple, try to lock it in the lockmode. */
-	if (found && lockmode != LockTupleNoLock)
+	if (found)
 	{
 		TM_FailureData tmfd;
 		TM_Result	res;
@@ -435,14 +455,14 @@ retry:
 		res = table_tuple_lock(rel, &(outslot->tts_tid), GetActiveSnapshot(),
 							   outslot,
 							   GetCurrentCommandId(false),
-							   lockmode == LockTupleTryExclusive ? LockTupleExclusive : lockmode,
+							   lockmode,
 							   LockWaitBlock,
 							   0 /* don't follow updates */ ,
 							   &tmfd);
 
 		PopActiveSnapshot();
 
-		if (should_refetch_tuple(res, &tmfd, lockmode))
+		if (should_refetch_tuple(res, &tmfd))
 			goto retry;
 	}
 
@@ -529,7 +549,7 @@ retry:
 
 	PopActiveSnapshot();
 
-	if (should_refetch_tuple(res, &tmfd, LockTupleShare))
+	if (should_refetch_tuple(res, &tmfd))
 		goto retry;
 
 	return true;
@@ -581,7 +601,7 @@ CheckAndReportConflict(ResultRelInfo *resultRelInfo, EState *estate,
  */
 void
 ExecSimpleRelationInsert(ResultRelInfo *resultRelInfo,
-						 EState *estate, TupleTableSlot *slot, bool prefetch)
+						 EState *estate, TupleTableSlot *slot)
 {
 	bool		skip_tuple = false;
 	Relation	rel = resultRelInfo->ri_RelationDesc;
@@ -625,7 +645,7 @@ ExecSimpleRelationInsert(ResultRelInfo *resultRelInfo,
 		if (resultRelInfo->ri_NumIndices > 0)
 			recheckIndexes = ExecInsertIndexTuples(resultRelInfo,
 												   slot, estate, false,
-												   conflictindexes || prefetch ? true : false,
+												   conflictindexes ? true : false,
 												   &conflict,
 												   conflictindexes, false);
 
@@ -644,7 +664,7 @@ ExecSimpleRelationInsert(ResultRelInfo *resultRelInfo,
 		 * be a frequent thing so we preferred to save the performance
 		 * overhead of extra scan before each insertion.
 		 */
-		if (conflict && !prefetch)
+		if (conflict)
 			CheckAndReportConflict(resultRelInfo, estate, CT_INSERT_EXISTS,
 								   recheckIndexes, NULL, slot);
 
@@ -671,7 +691,7 @@ ExecSimpleRelationInsert(ResultRelInfo *resultRelInfo,
 void
 ExecSimpleRelationUpdate(ResultRelInfo *resultRelInfo,
 						 EState *estate, EPQState *epqstate,
-						 TupleTableSlot *searchslot, TupleTableSlot *slot, bool prefetch)
+						 TupleTableSlot *searchslot, TupleTableSlot *slot)
 {
 	bool		skip_tuple = false;
 	Relation	rel = resultRelInfo->ri_RelationDesc;
@@ -722,7 +742,7 @@ ExecSimpleRelationUpdate(ResultRelInfo *resultRelInfo,
 		if (resultRelInfo->ri_NumIndices > 0 && (update_indexes != TU_None))
 			recheckIndexes = ExecInsertIndexTuples(resultRelInfo,
 												   slot, estate, true,
-												   conflictindexes || prefetch ? true : false,
+												   conflictindexes ? true : false,
 												   &conflict, conflictindexes,
 												   (update_indexes == TU_Summarizing));
 
@@ -731,7 +751,7 @@ ExecSimpleRelationUpdate(ResultRelInfo *resultRelInfo,
 		 * ExecSimpleRelationInsert to understand why this check is done at
 		 * this point.
 		 */
-		if (conflict && !prefetch)
+		if (conflict)
 			CheckAndReportConflict(resultRelInfo, estate, CT_UPDATE_EXISTS,
 								   recheckIndexes, searchslot, slot);
 

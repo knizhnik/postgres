@@ -316,7 +316,7 @@ static ParallelApplyWorkerInfo* prefetch_worker[MAX_LR_PREFETCH_WORKERS];
 static int prefetch_worker_rr = 0;
 static int n_prefetch_workers;
 
-bool prefetch_replica_identity_only = true;
+bool prefetch_replica_identity_only = false;
 
 size_t lr_prefetch_hits;
 size_t lr_prefetch_misses;
@@ -340,11 +340,6 @@ size_t lr_prefetch_inserts;
  */
 static XLogRecPtr skip_xact_finish_lsn = InvalidXLogRecPtr;
 #define is_skipping_changes() (unlikely(!XLogRecPtrIsInvalid(skip_xact_finish_lsn)))
-
-/*
- * If operation is performed by parallel prefetch worker
- */
-#define is_prefetching()	(am_parallel_apply_worker() && MyParallelShared->do_prefetch)
 
 /* BufFile handle of the current streaming file */
 static BufFile *stream_fd = NULL;
@@ -499,6 +494,9 @@ should_apply_changes_for_rel(LogicalRepRelMapEntry *rel)
 					(rel->state == SUBREL_STATE_SYNCDONE &&
 					 rel->statelsn <= remote_final_lsn));
 
+		case WORKERTYPE_PARALLEL_PREFETCH:
+			return true;
+
 		case WORKERTYPE_UNKNOWN:
 			/* Should never happen. */
 			elog(ERROR, "Unknown worker type");
@@ -573,7 +571,7 @@ handle_streamed_transaction(LogicalRepMsgType action, StringInfo s)
 	TransApplyAction apply_action;
 	StringInfoData original_msg;
 
-	if (is_prefetching())
+	if (am_parallel_prefetch_worker())
 	{
 		return false;
 	}
@@ -2402,27 +2400,6 @@ TargetPrivilegesCheck(Relation rel, AclMode mode)
 						RelationGetRelationName(rel))));
 }
 
-#define SAFE_APPLY(call)									\
-	if (is_prefetching())									\
-	{														\
-		PG_TRY();											\
-		{													\
-			call;											\
-		}													\
-		PG_CATCH();											\
-		{													\
-			HOLD_INTERRUPTS();								\
-			elog(DEBUG1, "Failed to prefetch LR operation");\
-			FlushErrorState();								\
-			RESUME_INTERRUPTS();							\
-			lr_prefetch_errors += 1;						\
-		}													\
-		PG_END_TRY();										\
-	} else {												\
-		call;												\
-	}
-
-
 /*
  * Handle INSERT message.
  */
@@ -2496,7 +2473,7 @@ apply_handle_insert(StringInfo s)
 		ResultRelInfo *relinfo = edata->targetRelInfo;
 
 		ExecOpenIndices(relinfo, false);
-		SAFE_APPLY(apply_handle_insert_internal(edata, relinfo, remoteslot));
+		apply_handle_insert_internal(edata, relinfo, remoteslot);
 		ExecCloseIndices(relinfo);
 	}
 
@@ -2530,19 +2507,25 @@ apply_handle_insert_internal(ApplyExecutionData *edata,
 		   !relinfo->ri_RelationDesc->rd_rel->relhasindex ||
 		   RelationGetIndexList(relinfo->ri_RelationDesc) == NIL);
 
-	if (is_prefetching() && prefetch_replica_identity_only)
+	if (am_parallel_prefetch_worker())
 	{
-		TupleTableSlot *localslot = NULL;
+		Relation localrel = relinfo->ri_RelationDesc;
+		TupleTableSlot *localslot = table_slot_create(localrel, &estate->es_tupleTable);
 		LogicalRepRelMapEntry *relmapentry = edata->targetRel;
-		Relation		localrel = relinfo->ri_RelationDesc;
-		EPQState		epqstate;
 
-		EvalPlanQualInit(&epqstate, estate, NULL, NIL, -1, NIL);
-
-		(void)FindReplTupleInLocalRel(edata, localrel,
-									  &relmapentry->remoterel,
-									  relmapentry->localindexoid,
-									  remoteslot, &localslot);
+		if (prefetch_replica_identity_only)
+		{
+			(void)RelationPrefetchIndex(localrel, relmapentry->localindexoid, remoteslot, localslot);
+		}
+		else
+		{
+			for (int i = 0; i < relinfo->ri_NumIndices; i++)
+			{
+				Oid sec_index_oid = RelationGetRelid(relinfo->ri_IndexRelationDescs[i]);
+				(void)RelationPrefetchIndex(localrel, sec_index_oid, remoteslot, localslot);
+			}
+		}
+		lr_prefetch_inserts += 1;
 	}
 	else
 	{
@@ -2552,11 +2535,7 @@ apply_handle_insert_internal(ApplyExecutionData *edata,
 
 		/* Do the insert. */
 		TargetPrivilegesCheck(relinfo->ri_RelationDesc, ACL_INSERT);
-		ExecSimpleRelationInsert(relinfo, estate, remoteslot, is_prefetching());
-	}
-	if (is_prefetching())
-	{
-		lr_prefetch_inserts += 1;
+		ExecSimpleRelationInsert(relinfo, estate, remoteslot);
 	}
 }
 
@@ -2701,8 +2680,8 @@ apply_handle_update(StringInfo s)
 		apply_handle_tuple_routing(edata,
 								   remoteslot, &newtup, CMD_UPDATE);
 	else
-		SAFE_APPLY(apply_handle_update_internal(edata, edata->targetRelInfo,
-												remoteslot, &newtup, rel->localindexoid));
+		apply_handle_update_internal(edata, edata->targetRelInfo,
+									 remoteslot, &newtup, rel->localindexoid);
 
 	finish_edata(edata);
 
@@ -2741,20 +2720,36 @@ apply_handle_update_internal(ApplyExecutionData *edata,
 	EvalPlanQualInit(&epqstate, estate, NULL, NIL, -1, NIL);
 	ExecOpenIndices(relinfo, false);
 
-	found = FindReplTupleInLocalRel(edata, localrel,
-									&relmapentry->remoterel,
-									localindexoid,
-									remoteslot, &localslot);
-
-	if (is_prefetching())
+	if (am_parallel_prefetch_worker())
 	{
+		/*
+		 * While it may be reasonable to prefetch indexes for both old and new tuples,
+		 * we do it only for one of them (old if it exists,  new otherwise), assuming
+		 * that probability that index key is changed is quite small
+		 */
+		localslot = table_slot_create(localrel, &estate->es_tupleTable);
+		found = RelationPrefetchIndex(localrel, localindexoid, remoteslot, localslot);
 		if (found)
 			lr_prefetch_hits += 1;
 		else
 			lr_prefetch_misses += 1;
-		if (prefetch_replica_identity_only)
-			goto Cleanup;
+		if (!prefetch_replica_identity_only)
+		{
+			for (int i = 0; i < relinfo->ri_NumIndices; i++)
+			{
+				Oid sec_index_oid = RelationGetRelid(relinfo->ri_IndexRelationDescs[i]);
+				if (sec_index_oid != localindexoid)
+				{
+					(void)RelationPrefetchIndex(localrel, sec_index_oid, remoteslot, localslot);
+				}
+			}
+		}
+		goto Cleanup;
 	}
+	found = FindReplTupleInLocalRel(edata, localrel,
+									&relmapentry->remoterel,
+									localindexoid,
+									remoteslot, &localslot);
 
 	/*
 	 * Tuple found.
@@ -2796,7 +2791,7 @@ apply_handle_update_internal(ApplyExecutionData *edata,
 		/* Do the actual update. */
 		TargetPrivilegesCheck(relinfo->ri_RelationDesc, ACL_UPDATE);
 		ExecSimpleRelationUpdate(relinfo, estate, &epqstate, localslot,
-								 remoteslot, is_prefetching());
+								 remoteslot);
 	}
 	else
 	{
@@ -2894,8 +2889,8 @@ apply_handle_delete(StringInfo s)
 		ResultRelInfo *relinfo = edata->targetRelInfo;
 
 		ExecOpenIndices(relinfo, false);
-		SAFE_APPLY(apply_handle_delete_internal(edata, relinfo,
-												remoteslot, rel->localindexoid));
+		apply_handle_delete_internal(edata, relinfo,
+									 remoteslot, rel->localindexoid);
 		ExecCloseIndices(relinfo);
 	}
 
@@ -2938,17 +2933,19 @@ apply_handle_delete_internal(ApplyExecutionData *edata,
 		   !localrel->rd_rel->relhasindex ||
 		   RelationGetIndexList(localrel) == NIL);
 
-	found = FindReplTupleInLocalRel(edata, localrel, remoterel, localindexoid,
-									remoteslot, &localslot);
-
-	if (is_prefetching())
+	if (am_parallel_prefetch_worker())
 	{
+		localslot = table_slot_create(localrel, &estate->es_tupleTable);
+		found = RelationPrefetchIndex(localrel, localindexoid, remoteslot, localslot);
 		if (found)
 			lr_prefetch_hits += 1;
 		else
 			lr_prefetch_misses += 1;
+		/* No need to prefdetch other indexes because the are not touched during delete */
 		goto Cleanup;
 	}
+	found = FindReplTupleInLocalRel(edata, localrel, remoterel, localindexoid,
+									remoteslot, &localslot);
 
 	/* If found delete it. */
 	if (found)
@@ -3004,8 +3001,6 @@ FindReplTupleInLocalRel(ApplyExecutionData *edata, Relation localrel,
 	EState	   *estate = edata->estate;
 	bool		found;
 
-	LockTupleMode lockmode = is_prefetching() ? prefetch_replica_identity_only ? LockTupleNoLock : LockTupleTryExclusive : LockTupleExclusive;
-
 	/*
 	 * Regardless of the top-level operation, we're performing a read here, so
 	 * check for SELECT privileges.
@@ -3031,11 +3026,11 @@ FindReplTupleInLocalRel(ApplyExecutionData *edata, Relation localrel,
 #endif
 
 		found = RelationFindReplTupleByIndex(localrel, localidxoid,
-											 lockmode,
+											 LockTupleExclusive,
 											 remoteslot, *localslot);
 	}
 	else
-		found = RelationFindReplTupleSeq(localrel, lockmode,
+		found = RelationFindReplTupleSeq(localrel, LockTupleExclusive,
 										 remoteslot, *localslot);
 
 	return found;
@@ -3126,14 +3121,14 @@ apply_handle_tuple_routing(ApplyExecutionData *edata,
 	switch (operation)
 	{
 		case CMD_INSERT:
-			SAFE_APPLY(apply_handle_insert_internal(edata, partrelinfo,
-													remoteslot_part));
+			apply_handle_insert_internal(edata, partrelinfo,
+										 remoteslot_part);
 			break;
 
 		case CMD_DELETE:
-			SAFE_APPLY(apply_handle_delete_internal(edata, partrelinfo,
-													remoteslot_part,
-													part_entry->localindexoid));
+			apply_handle_delete_internal(edata, partrelinfo,
+										 remoteslot_part,
+										 part_entry->localindexoid);
 			break;
 
 		case CMD_UPDATE:
@@ -3161,9 +3156,6 @@ apply_handle_tuple_routing(ApplyExecutionData *edata,
 				{
 					TupleTableSlot *newslot = localslot;
 
-					if (is_prefetching())
-						return;
-
 					/* Store the new tuple for conflict reporting */
 					slot_store_data(newslot, part_entry, newtup);
 
@@ -3188,9 +3180,6 @@ apply_handle_tuple_routing(ApplyExecutionData *edata,
 					conflicttuple.origin != replorigin_session_origin)
 				{
 					TupleTableSlot *newslot;
-
-					if (is_prefetching())
-						return;
 
 					/* Store the new tuple for conflict reporting */
 					newslot = table_slot_create(partrel, &estate->es_tupleTable);
@@ -3235,7 +3224,7 @@ apply_handle_tuple_routing(ApplyExecutionData *edata,
 					TargetPrivilegesCheck(partrelinfo->ri_RelationDesc,
 										  ACL_UPDATE);
 					ExecSimpleRelationUpdate(partrelinfo, estate, &epqstate,
-											 localslot, remoteslot_part, is_prefetching());
+											 localslot, remoteslot_part);
 				}
 				else
 				{
@@ -3308,8 +3297,8 @@ apply_handle_tuple_routing(ApplyExecutionData *edata,
 						slot_getallattrs(remoteslot);
 					}
 					MemoryContextSwitchTo(oldctx);
-					SAFE_APPLY(apply_handle_insert_internal(edata, partrelinfo_new,
-															remoteslot_part));
+					apply_handle_insert_internal(edata, partrelinfo_new,
+												 remoteslot_part);
 				}
 
 				EvalPlanQualEnd(&epqstate);
@@ -3643,6 +3632,7 @@ store_flush_position(XLogRecPtr remote_lsn, XLogRecPtr local_lsn)
 	MemoryContextSwitchTo(ApplyMessageContext);
 }
 
+
 /* Update statistics of the worker. */
 static void
 UpdateWorkerStats(XLogRecPtr last_lsn, TimestampTz send_time, bool reply)
@@ -3729,15 +3719,13 @@ LogicalRepApplyLoop(XLogRecPtr last_received)
 		int i;
 		for (i = 0; i < max_parallel_prefetch_workers_per_subscription; i++)
 		{
-			prefetch_worker[i] = pa_launch_parallel_worker();
+			prefetch_worker[i] = pa_launch_prefetch_worker();
 			if (!prefetch_worker[i])
 			{
 				elog(LOG, "Launch only %d prefetch workers from %d",
 					 i, max_parallel_prefetch_workers_per_subscription);
 				break;
 			}
-			prefetch_worker[i]->in_use = true;
-			prefetch_worker[i]->shared->do_prefetch = true;
 		}
 		n_prefetch_workers = i;
 		prefetch_buf = palloc(prefetch_buf_size);
@@ -3761,7 +3749,7 @@ LogicalRepApplyLoop(XLogRecPtr last_received)
 		pgsocket	fd = PGINVALID_SOCKET;
 		int			rc;
 		int32		len;
-		char	   *buf = NULL;
+		char		*buf = NULL;
 		bool		endofstream = false;
 		bool		no_more_data = false;
 		long		wait_time;
@@ -4116,6 +4104,10 @@ send_feedback(XLogRecPtr recvpos, bool force, bool requestReply)
 static void
 apply_worker_exit(void)
 {
+	/* Don't restart prefetch workers */
+	if (am_parallel_prefetch_worker())
+		return;
+
 	if (am_parallel_apply_worker())
 	{
 		/*
@@ -4919,6 +4911,10 @@ InitializeLogRepWorker(void)
 				(errmsg("logical replication table synchronization worker for subscription \"%s\", table \"%s\" has started",
 						MySubscription->name,
 						get_rel_name(MyLogicalRepWorker->relid))));
+	else if (am_parallel_prefetch_worker())
+		ereport(LOG,
+				(errmsg("logical replication prefetch worker for subscription \"%s\" has started",
+						MySubscription->name)));
 	else
 		ereport(LOG,
 				(errmsg("logical replication apply worker for subscription \"%s\" has started",

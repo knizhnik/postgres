@@ -759,12 +759,14 @@ extern bool RelationFindReplTupleByIndex(Relation rel, Oid idxoid,
 										 TupleTableSlot *outslot);
 extern bool RelationFindReplTupleSeq(Relation rel, LockTupleMode lockmode,
 									 TupleTableSlot *searchslot, TupleTableSlot *outslot);
+extern bool RelationPrefetchIndex(Relation rel, Oid idxoid, TupleTableSlot *searchslot,
+								  TupleTableSlot *outslot);
 
 extern void ExecSimpleRelationInsert(ResultRelInfo *resultRelInfo,
-									 EState *estate, TupleTableSlot *slot, bool prefetch);
+									 EState *estate, TupleTableSlot *slot);
 extern void ExecSimpleRelationUpdate(ResultRelInfo *resultRelInfo,
 									 EState *estate, EPQState *epqstate,
-									 TupleTableSlot *searchslot, TupleTableSlot *slot, bool prefetch);
+									 TupleTableSlot *searchslot, TupleTableSlot *slot);
 extern void ExecSimpleRelationDelete(ResultRelInfo *resultRelInfo,
 									 EState *estate, EPQState *epqstate,
 									 TupleTableSlot *searchslot);

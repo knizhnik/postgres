@@ -2152,7 +2152,7 @@ struct config_bool ConfigureNamesBool[] =
 			NULL,
 		},
 		&prefetch_replica_identity_only,
-		true,
+		false,
 		NULL, NULL, NULL
 	},
 

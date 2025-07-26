@@ -397,10 +397,61 @@ pa_setup_dsm(ParallelApplyWorkerInfo *winfo)
 }
 
 /*
+ * Try to get a parallel prefetch worker.
+ */
+ParallelApplyWorkerInfo *
+pa_launch_prefetch_worker(void)
+{
+	MemoryContext oldcontext;
+	bool		launched;
+	ParallelApplyWorkerInfo *winfo;
+
+	/*
+	 * Start a new parallel prefetch worker.
+	 *
+	 * The worker info can be used for the lifetime of the worker process, so
+	 * create it in a permanent context.
+	 */
+	oldcontext = MemoryContextSwitchTo(ApplyContext);
+
+	winfo = (ParallelApplyWorkerInfo *) palloc0(sizeof(ParallelApplyWorkerInfo));
+
+	/* Setup shared memory. */
+	if (!pa_setup_dsm(winfo))
+	{
+		MemoryContextSwitchTo(oldcontext);
+		pfree(winfo);
+		return NULL;
+	}
+
+	launched = logicalrep_worker_launch(WORKERTYPE_PARALLEL_PREFETCH,
+										MyLogicalRepWorker->dbid,
+										MySubscription->oid,
+										MySubscription->name,
+										MyLogicalRepWorker->userid,
+										InvalidOid,
+										dsm_segment_handle(winfo->dsm_seg));
+
+	if (launched)
+	{
+		winfo->do_prefetch = true;
+	}
+	else
+	{
+		pa_free_worker_info(winfo);
+		winfo = NULL;
+	}
+
+	MemoryContextSwitchTo(oldcontext);
+
+	return winfo;
+}
+
+/*
  * Try to get a parallel apply worker from the pool. If none is available then
  * start a new one.
  */
-ParallelApplyWorkerInfo *
+static ParallelApplyWorkerInfo *
 pa_launch_parallel_worker(void)
 {
 	MemoryContext oldcontext;
@@ -729,43 +780,6 @@ ProcessParallelApplyInterrupts(void)
 	}
 }
 
-
-static void
-pa_apply_dispatch(StringInfo s)
-{
-	if (MyParallelShared->do_prefetch)
-	{
-		PG_TRY();
-		{
-			apply_dispatch(s);
-		}
-		PG_CATCH();
-		{
-			HOLD_INTERRUPTS();
-
-			elog(DEBUG1, "Failed to prefetch LR operation");
-
-			/* TODO: should we somehow dump the error or just silently ignore it? */
-			/* EmitErrorReport(); */
-			FlushErrorState();
-
-			RESUME_INTERRUPTS();
-
-			lr_prefetch_errors += 1;
-		}
-		PG_END_TRY();
-		if (!prefetch_replica_identity_only)
-		{
-			/* We need to abort transaction to undo insert */
-			AbortCurrentTransaction();
-		}
-	}
-	else
-	{
-		apply_dispatch(s);
-	}
-}
-
 /* Parallel apply worker main loop. */
 static void
 LogicalParallelApplyLoop(shm_mq_handle *mqh)
@@ -831,7 +845,7 @@ LogicalParallelApplyLoop(shm_mq_handle *mqh)
 			 */
 			s.cursor += SIZE_STATS_MESSAGE;
 
-			pa_apply_dispatch(&s);
+			apply_dispatch(&s);
 		}
 		else if (shmq_res == SHM_MQ_WOULD_BLOCK)
 		{
@@ -980,7 +994,7 @@ ParallelApplyWorkerMain(Datum main_arg)
 
 	InitializingApplyWorker = false;
 
-	if (!MyParallelShared->do_prefetch)
+	if (am_parallel_apply_worker())
 	{
 		/* Setup replication origin tracking. */
 		StartTransactionCommand();
@@ -995,11 +1009,6 @@ ParallelApplyWorkerMain(Datum main_arg)
 		replorigin_session_setup(originid, MyLogicalRepWorker->leader_pid);
 		replorigin_session_origin = originid;
 		CommitTransactionCommand();
-	}
-	else
-	{
-		/* Do not write WAL for prefetch */
-		wal_level = WAL_LEVEL_MINIMAL;
 	}
 	/*
 	 * Setup callback for syscache so that we know when something changes in
@@ -1193,7 +1202,7 @@ pa_send_data(ParallelApplyWorkerInfo *winfo, Size nbytes, const void *data)
 	shm_mq_result result;
 	TimestampTz startTime = 0;
 
-	if (!winfo->shared->do_prefetch)
+	if (!winfo->do_prefetch)
 	{
 		Assert(!IsTransactionState());
 		Assert(!winfo->serialize_changes);
@@ -1565,6 +1574,9 @@ static PartialFileSetState
 pa_get_fileset_state(void)
 {
 	PartialFileSetState fileset_state;
+
+	if (am_parallel_prefetch_worker())
+		return FS_EMPTY;
 
 	Assert(am_parallel_apply_worker());
 

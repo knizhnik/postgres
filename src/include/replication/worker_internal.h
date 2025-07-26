@@ -32,6 +32,7 @@ typedef enum LogicalRepWorkerType
 	WORKERTYPE_TABLESYNC,
 	WORKERTYPE_APPLY,
 	WORKERTYPE_PARALLEL_APPLY,
+	WORKERTYPE_PARALLEL_PREFETCH,
 } LogicalRepWorkerType;
 
 typedef struct LogicalRepWorker
@@ -180,11 +181,6 @@ typedef struct ParallelApplyWorkerShared
 	 */
 	PartialFileSetState fileset_state;
 	FileSet		fileset;
-
-	/*
-	 * Prefetch worker
-	 */
-	bool		do_prefetch;
 } ParallelApplyWorkerShared;
 
 /*
@@ -218,6 +214,12 @@ typedef struct ParallelApplyWorkerInfo
 	 * transaction. False indicates this worker is available for re-use.
 	 */
 	bool		in_use;
+
+
+	/*
+	 * Performing prefetch of pages accessed by LR operations
+	 */
+	bool		do_prefetch;
 
 	ParallelApplyWorkerShared *shared;
 } ParallelApplyWorkerInfo;
@@ -339,13 +341,13 @@ extern void pa_decr_and_wait_stream_block(void);
 extern void pa_xact_finish(ParallelApplyWorkerInfo *winfo,
 						   XLogRecPtr remote_lsn);
 
-extern void pa_prefetch_handle_modification(StringInfo s, LogicalRepMsgType action);
-
 #define isParallelApplyWorker(worker) ((worker)->in_use &&			\
 									   (worker)->type == WORKERTYPE_PARALLEL_APPLY)
+#define isParallelPrefetchWorker(worker) ((worker)->in_use &&			\
+										  (worker)->type == WORKERTYPE_PARALLEL_PREFETCH)
 #define isTablesyncWorker(worker) ((worker)->in_use && \
 								   (worker)->type == WORKERTYPE_TABLESYNC)
-extern ParallelApplyWorkerInfo* pa_launch_parallel_worker(void);
+extern ParallelApplyWorkerInfo* pa_launch_prefetch_worker(void);
 
 static inline bool
 am_tablesync_worker(void)
@@ -365,6 +367,13 @@ am_parallel_apply_worker(void)
 {
 	Assert(MyLogicalRepWorker->in_use);
 	return isParallelApplyWorker(MyLogicalRepWorker);
+}
+
+static inline bool
+am_parallel_prefetch_worker(void)
+{
+	Assert(MyLogicalRepWorker->in_use);
+	return isParallelPrefetchWorker(MyLogicalRepWorker);
 }
 
 #endif							/* WORKER_INTERNAL_H */
